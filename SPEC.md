@@ -7,14 +7,26 @@
 
 ## 0. 定位（先把话说清楚）
 
-**本 MVP 不是人身安全级系统。** 它打通的是「发布 → 签名 → broker → 客户端 → 渲染 → 确认」这条链路，并以正确的安全姿态（Ed25519 签名 + 防重放）实现 `critical`/`emergency` 的强呈现。
+**本文件只规定线路协议（wire protocol）**：消息信封、规范化与签名、客户端接受门、MQTT 拓扑，以及承载它们的**告警面** HTTP 端点（§7）。控制面/管理后台的完整 HTTP 接口见 [docs/API.md](docs/API.md)；多租户、RBAC、SSO、持久化投递等企业侧架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
-它**暂时不**保证：
-- 睡眠/锁屏的电脑收到警报（桌面结构性做不到，见 §10）；
-- 单 broker 挂掉时的送达（MVP 是单点）；
-- 浏览器客户端跨应用「接管」其它窗口（浏览器做不到，需 Tauri，见 §10）。
+**协议核心已达生产标准。** 下列机制均已实现并锁定：Ed25519 覆盖 13 字段规范化形式、四步接受门（验签 / ±120s 时钟窗 / `id`+`nonce` 去重 / TTL）、retained 快照 + 事件流拓扑、已签名的两步撤回、TTL 自愈清扫、broker ACL。跨语言逐字节一致性由自动化 conformance 测试守护（Go 签名 → 浏览器 `web/verify.js` 验签；篡改任一字段必须被拒）。
 
-**结论：在第四阶段冗余通道（ntfy / 手机 FSI）做完前，不要真的依赖它传递地震/火灾。** 真正的人身安全继续依赖官方渠道（运营商緊急地震速報等）。本系统的增量价值在：桌面（收不到 cell broadcast）+ 把 homelab 告警与物理告警统一到一个界面。
+**但 §2–§9 并非全部落地。** 本文件是**目标规范**，以下条款目前仍是规范而非现状：
+
+| 条款 | 规范要求 | 现状 |
+|---|---|---|
+| §5.2 | `emergency` 由服务端**续期**（同 `id` + 新 `issued_at`/`ttl` 重发）| ❌ 未实现。清扫器只会清空过期的 active 槽，不重发。 |
+| §5.3 | 面板订阅 `alerts/+/ack/#` 构建「谁已确认」名册 | ❌ 未实现。客户端**会写** ack（`web/app.js`），但服务端只订阅 `status/#`，无人收集 ack。 |
+| §8 | 客户端接受**有序公钥列表**以支持轮换 | ❌ 未实现。客户端只持单一公钥；轮换需停机换钥。 |
+| §9 | Arm 手势一并申请 `Notification.requestPermission()` | ❌ 未实现。只解锁了音频。 |
+
+**但仍有诚实的边界，别 over-claim：**
+- **没有原生客户端**（Android / 桌面 / iOS 均未开始，见 [SPEC-SAFETY.md §10](SPEC-SAFETY.md) 的 P5/P6/P7）→ 无法保证唤醒睡眠或锁屏的设备，也无法盖在其它应用之上。浏览器客户端只在「人在机器前、页面开着」时有效。
+- **设备/广播面仍是单租户**：`alerts/active`、`alerts/events` 是全局 topic，设备没有 org 归属。多租户目前只覆盖控制面（发布、历史、服务账号）。
+- **单 broker 单点**：无集群、无 leader election。
+- **服务端自检未闭环**：心跳恒发 `green`（不查自身 broker/store 健康），且**缺少外部 dead-man switch**——服务器整体宕机时，没有第二方替它喊。
+
+**结论：真正的人身安全仍以官方渠道为第一路径**（緊急地震速報、运营商 cell broadcast 等）。AlertHub 的增量价值在于：覆盖收不到 cell broadcast 的桌面场景，以及把组织内的系统告警与物理告警统一到一条已签名、可撤回、可审计的链路上——它是官方渠道的补充，不是替代。
 
 ---
 
@@ -115,7 +127,7 @@ Go `base64.RawURLEncoding`；JS 自带 helper；Kotlin `getUrlEncoder().withoutP
 - **`id`** 处理 QoS1 重复 + retained 重连重发（gap #6/#7）。
 - **`nonce`** 防「重放一条被抓的合法包」。
 - **seen-set 持久化 + 淘汰**：浏览器用 `Map` 镜像到 `localStorage`，每次接受后清除 `now - issued_at > MAX_SKEW` 的条目——因第 2 步已拒绝更老的，seen-set 天然有界（≈ 警报速率 × 120s）。
-- **时钟依赖**：第 2/4 步依赖收发双方时钟在 MAX_SKEW 内一致 → **所有主机必须跑 NTP**。客户端时钟错 >120s 会静默拒收**有效**警报（危险）→ 路线图：客户端据 broker/服务端 time ping 计算偏移并在漂移 >30s 时高调告警。
+- **时钟依赖**：第 2/4 步依赖收发双方时钟在 MAX_SKEW 内一致 → **所有主机必须跑 NTP**。客户端时钟错 >120s 会静默拒收**有效**警报（危险）→ 客户端已据已签名心跳的 `issued_at` 计算偏移，连续 3 拍漂移 >30s 时弹出时钟告警条（SPEC-SAFETY §3.2）。
 
 ---
 
@@ -181,13 +193,28 @@ pattern write status/%u
 
 ## 7. 服务端 HTTP API
 
+> 本节只列**告警面**端点——即直接参与「发布→签名→broker→客户端」这条链路的那些。
+> 认证/2FA/passkey/OIDC/SAML/组织/服务账号/健康检查等控制面接口，连同本节这些告警面端点，**全部 38 条路由**见 [docs/API.md](docs/API.md)。
+
 | 方法 路径 | 鉴权 | 作用 |
 |---|---|---|
-| `POST /api/publish` | `Bearer <admin_token>` | 校验输入 → 生成 id/nonce/issued_at → 签名 → 发 `events`(QoS1) + 按策略 retained 发 `active` → 落库。返回完整信封。 |
-| `POST /api/cancel` | `Bearer <admin_token>` | body `{id}` → 构造已签名 cancel → 发 events + 清/换 active。 |
-| `GET /api/history` | `Bearer <admin_token>` | 最近 N 条警报（来自 SQLite）。 |
-| `GET /pubkey` | 公开 | 返回 `{pubkey: "<base64url-raw-32>"}`。**MVP 客户端启动时拉取**（本地 loopback 可信）。**生产**应改为**构建期内嵌**公钥作为信任锚——见 §8。 |
+| `POST /api/publish` | 权限 `alert:publish` | 校验输入 → 生成 id/nonce/issued_at → 签名 → 发 `events`(QoS1) + 按 §5 策略 retained 发 `active` → 落库并入投递队列。`source` 固定为 `panel`。返回完整信封。 |
+| `POST /api/cancel` | 权限 `alert:cancel` | body `{id}` → 构造已签名 cancel → 发 events + 清空/替换 active（§5.1）。返回 cancel 信封。 |
+| `GET /api/history` | 权限 `alert:read` | 当前活动 org 最近 50 条已签名信封（Postgres 下经 RLS 事务读取）。 |
+| `GET /api/devices` | 权限 `device:read` | 在线设备名册（服务端订阅 `status/#` 得到的 presence）。**注意：该名册目前是全局的，尚未按 org 隔离**（见 §0）。 |
+| `GET /api/delivery/stats` | 权限 `alert:read` | 投递队列状态计数 + 最近 20 条死信。 |
+| `POST /api/cap` | 服务账号 scope `alerts:ingest` | CAP 1.2 XML 摄入。`msgType=Cancel` 走撤回路径：按 `<references>` 的每个 `sender,identifier` 重算确定性 id（`cap-` + SHA-256(sender‖NUL‖identifier) 前 12 字节 hex），再走与 `/api/cancel` 相同的已签名撤回。`source` 固定为 `cap`。 |
+| `GET /pubkey` | 公开 | 信任锚 + 浏览器引导：`{pubkey, schema_version, max_skew, ws_port, mqtt_user, mqtt_pw}`。**MVP 客户端启动时拉取**（本地 loopback 可信）。**生产**应改为**构建期内嵌**公钥作为信任锚——见 §8。 |
 | `GET /`、静态 | 公开 | 提供 `web/`（面板 + 客户端）。 |
+
+**调用者有三类：**
+1. **人（会话）**：`Authorization: Bearer <access JWT>`，或 `ah_access` cookie。权限由**调用者在活动 org 中的成员角色**解析（不是用户的全局 role）；不是成员或角色无该权限 → 403。
+2. **机器（服务账号）**：`Authorization: Bearer ahk_…`，按 token 的 SHA-256 查库并校验 scope。目前只有 `/api/cap` 走这条路（scope `alerts:ingest`）；非 `ahk_` 前缀的 token 会回退到管理员会话鉴权。
+3. **静态管理令牌** `ALERTHUB_ADMIN_TOKEN`：给脚本/自动化用，**绕过 RBAC**（等同 super）。默认值是 `dev-admin-token`，**生产必须改掉**。
+
+**活动 org 解析顺序**：`X-Org-Id` 请求头 > API key 所属 org > 默认 org。带 `X-Org-Id` 时依然要求调用者是该 org 成员（super-admin 与管理令牌除外），因此它不是越权通道。权限名与角色→权限映射见 docs/API.md。
+
+**错误码**：400 输入非法 / CAP XML 不合法；401 未认证；403 权限或 scope 不足；502 broker 发布失败。
 
 输入校验：拒绝 `title/body/action/source` 含 `\n`/`\r`；severity/category 必须在枚举内；ttl 缺省按 severity 给（如 emergency 120s、critical 120s、warning/notice 600s）。
 
@@ -197,8 +224,8 @@ pattern write status/%u
 
 ```
 发布来源(面板/脚本/EEW) ──HTTP+token──▶ Go 服务端 ──(内嵌)──▶ mochi broker ──MQTT/WS──▶ 浏览器客户端
-                                         │  验权→加签名(Ed25519)→publish→落库(SQLite)
-                                         └ 单二进制：broker + API + 静态 web，一条命令起
+                                         │  验权(RBAC)→加签名(Ed25519)→publish→落库(SQLite/PostgreSQL)
+                                         └ 单二进制：broker + API + 静态 web + 内嵌管理 SPA，一条命令起
 ```
 
 - **密钥生成**：首次启动若无私钥则 `ed25519.GenerateKey` 生成，私钥写 `keys/alerthub_ed25519.key`（`0600`，gitignored），公钥写 `keys/alerthub_ed25519.pub`。
@@ -220,13 +247,15 @@ pattern write status/%u
 
 ## 10. MVP 能证明什么 / 不能证明什么（诚实边界）
 
-| 能力 | 浏览器客户端(MVP) | Tauri 包壳(下一步) |
+| 能力 | 浏览器客户端（**已实现**）| Tauri 包壳（**未开始**，见 SPEC-SAFETY §10 P6）|
 |---|---|---|
 | 打通 发布→签名→broker→渲染→确认 全链路 | ✅ | ✅ |
 | 全视口纯色覆盖层 + 循环报警音 + 强制确认 | ✅（覆盖当前标签页） | ✅ |
 | 真·OS 全屏（无手势自动进入） | ❌（Fullscreen API 需用户手势） | ✅（原生 `setFullscreen` 无需手势） |
 | 盖在**其它应用**之上（强出现） | ❌（浏览器做不到） | ✅（always-on-top + NSWindow level/collectionBehavior；fullscreen Space 用 `ActivationPolicy::Accessory` 兜底） |
 | 睡眠/锁屏的 Mac 收到 | ❌ | ❌（结构性做不到） |
+
+> ⚠️ 右栏是 Tauri 包壳**若实现**能达到的能力，**目前一行代码都没有**。今天唯一存在的桌面通道是左栏的浏览器客户端。
 
 → 桌面是「人在机器前时的尽力提醒」通道；**手机（FSI + 高优先级推送唤醒锁屏）才是真正的人身安全通道**（Android 14+ `USE_FULL_SCREEN_INTENT` 对侧载的闹钟类 app 仍可用，运行时查 `canUseFullScreenIntent()`）。
 
@@ -245,7 +274,7 @@ pattern write status/%u
 | #7 QoS1 重复 | §4 第 3 步按 id+nonce dedup。 |
 | 子分歧：拼接 vs JCS | 选**字段拼接**（跨语言更易逐字节一致；JCS 需各语言 canonical-JSON 库，脆弱）。 |
 | 子分歧：秒 vs 毫秒 | 选**秒**（贴合原文档 `ttl`、人类可读；Go/JS 都有明确取整语义）。 |
-| 命名/目录拼写 `Aleart` | 已知拼写错误（应为 `Alert`/`alert-hub`）；目录名暂留，发 GitHub 前改。 |
+| 命名/目录拼写 `Aleart` | 已知拼写错误（应为 `Alert`）；仓库已按 `github.com/KazuhaHub/AleartHub` 发布，拼写沿用。Go module path 仍是 `github.com/kazuha/alerthub`，与仓库地址不一致——不影响构建运行，但 `go install` 用不了。 |
 
 ---
 *本规范随实现迭代；改动先改本文件。*

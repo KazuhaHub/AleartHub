@@ -24,6 +24,8 @@
 
 单二进制 + go:embed 是真优势，**主推**；Postgres/EMQX 是规模档的可插拔升级，不改设备协议。
 
+> ⚠️ **本表是目标形态，不是现状。** 当前仓库**没有** Dockerfile / compose / Helm / kustomize，也**没有**可插拔 Bus——两档都跑内嵌 mochi 单进程，Postgres 主从与 EMQX 集群均未接入。已实现的只有「sqlite ↔ Postgres 双驱动 + RLS」。逐项对照见 §11。
+
 ---
 
 ## 2. 多租户 + 数据模型
@@ -85,7 +87,7 @@ internal/store/  store.go(接口)  queries/  sqlite/  postgres/(pgx+RLS)  migrat
 ## 6. 规模 / 可靠性 / 可观测
 
 - **broker 可插拔 `Bus` 接口**：内嵌 mochi（默认，≤~5万）→ **EMQX 集群**（企业；验证过 100M 连接、MQTT5 共享订阅、cluster-wide retained）。**设备始终说 MQTT，只换 broker 不换协议。** NATS/Kafka 只用于**内部投递流水线**，不放设备边缘。
-- **投递流水线**：单事务写 `alerts` + **outbox**（Postgres）→ **River**（Postgres 任务队列）每通道 worker（push/sms/voice/email/mqtt/ntfy），at-least-once + 幂等键 + 每通道限速/退避。超 ~1万事件/s 才把内部跳转移到 NATS JetStream。
+- **投递流水线**：单事务写 `alerts` + **outbox**（`delivery_jobs`）→ 每通道 worker（push/sms/voice/email/mqtt/ntfy），at-least-once + 幂等键 + 每通道限速/退避。**队列自研，不用 River**——River 只支持 Postgres，而 Starter 档承诺单二进制 + sqlite，两档必须共用同一份投递语义（Postgres 侧用 `FOR UPDATE SKIP LOCKED`）。超 ~1万事件/s 才把内部跳转移到 NATS JetStream。
 - **HA**：无状态 Go 多副本（worker 用 `FOR UPDATE SKIP LOCKED` 竞争，无需 leader）；Postgres 主从；EMQX 集群（≥3）。单例任务（TTL 清扫、升级计时、演练、心跳）用 **Postgres advisory-lock leader 选举**（不引 etcd/Consul）。
 - **FAIL-LOUD 升级到集群**：leader 签发 `system/heartbeat`；leader 死则秒级接管；整集群死则客户端看门狗触发；**外部 off-cluster dead-man's-switch** 经 ntfy 报警（看门狗不能与被看者共命运）；心跳要编码"投递流水线健康"。
 - **可观测**：Prometheus（`alert_fanout_seconds`、`delivery_latency_seconds{channel}`、`ack_latency_seconds{severity}`、`queue_depth{queue}`、`broker_connections`，全用 histogram）+ OTel 全发送链路追踪 + slog JSON + `/healthz`+`/readyz`。SLA 按 severity 的 **p99 signed→acked** 定义。
@@ -101,7 +103,7 @@ internal/store/  store.go(接口)  queries/  sqlite/  postgres/(pgx+RLS)  migrat
 - **SCIM 2.0**（`elimity-com/scim`，别手写 PATCH/filter）：`/scim/v2` 每租户 bearer token（存 hash、可多 token 轮换、token 推断租户=隔离边界）；`active:false`/DELETE → 软停用 + `BumpTokenVersion` + 踢 session（不硬删，保审计）；存 `externalId`。**这是大客户的 table-stakes（离职即时下线）**。
 
 ### 7b. 机器（CAP 源 / webhook / 集成）
-- **Scoped API key**（`ahk_<tenant>_<rand>`，存 hash，CAP ingest 默认）+ **OAuth2 client-credentials**（短时 JWT，企业策略要求）。最小权限 scope（`alerts:ingest` 仅此）；每租户 + 每 token 限速（防一个坏客户端 DoS 扇出）；≥2 活跃 secret 轮换；secret 只显示一次。
+- **Scoped API key**（实现为 `ahk_<rand>`——无租户段，org 由数据库行决定；存 SHA-256 hash，CAP ingest 默认）+ **OAuth2 client-credentials**（短时 JWT，企业策略要求）。最小权限 scope（`alerts:ingest` 仅此）；每租户 + 每 token 限速（防一个坏客户端 DoS 扇出）；≥2 活跃 secret 轮换；secret 只显示一次。
 
 ### 7c. 设备舰队（AWS IoT 模式，扩到万级）
 - **provisioning-by-claim**：批量 claim 凭据（**每批共享、非全舰队**）→ 设备连上跑 **fleet provisioning 模板** → 发**每设备唯一凭据** + 钉死该 org 公钥 + 端点。
@@ -120,7 +122,7 @@ internal/store/  store.go(接口)  queries/  sqlite/  postgres/(pgx+RLS)  migrat
 ---
 
 ## 9. 通道与来源
-- **MQTT**（自有客户端：Android/Tauri/壁挂/web，富+即时+可 ack）+ **ntfy**（独立兜底）+ **push/SMS/voice/email**（River worker，企业 table-stakes 四通道）+ Teams/Slack（现代 table-stakes）。
+- **MQTT**（自有客户端：Android/Tauri/壁挂/web，富+即时+可 ack）+ **ntfy**（独立兜底）+ **push/SMS/voice/email**（outbox worker，企业 table-stakes 四通道；**目前只实现 webhook + email**）+ Teams/Slack（现代 table-stakes）。
 - **来源**：**CAP 1.2 ingest API**（对接 HA/JMA 衍生/任意应急工具）+ 日本 EEW 双源（SPEC-SAFETY §6）+ 手动场景模板 + webhook。
 - 物理端点（桌面接管/IP 广播/数字标牌/panic button）= 差异化（edu/医疗/政府垂直），分阶段。
 
@@ -128,8 +130,8 @@ internal/store/  store.go(接口)  queries/  sqlite/  postgres/(pgx+RLS)  migrat
 
 ## 10. 开源产品化
 
-- **许可证：Apache-2.0**（含专利授权，适合密码/安全产品；MIT 不提专利）。**不要 AGPL**（Google 等大厂明令禁用，正好赶走你的买家）、不要 FSL/BSL（丢"开源"标签，与"可自查供应链"的信任叙事冲突）。贡献用 **DCO**（必要时轻量 CLA 保留 relicense 余地）。
-- **将来商业化 = open-core**：核心永久 Apache，企业功能放单独 `/ee` 目录另立商业许可（GitLab/Mattermost/Authentik 模式）；**永不 relicense 核心**。
+- **许可证：实际采用 AGPL-3.0 + 商业双许可**（见 `LICENSE` / `NOTICE`；Grafana/Mattermost 模式：社区版 AGPL，内部政策禁用 AGPL 的组织走商业授权）。这**推翻了本节原先的 Apache-2.0 建议**，代价照实记录：AGPL 会被部分大厂直接排除在采购之外，商业授权通道就是为此留的逃生口。仍然不要 FSL/BSL（丢"开源"标签，与"可自查供应链"的信任叙事冲突）。贡献用 **DCO + CLA**（CLA 授予维护者提供上述双许可的权利）。
+- **将来商业化 = open-core**：核心永久 AGPL，企业功能放单独 `/ee` 目录另立商业许可（GitLab/Mattermost/Authentik 模式）；**永不 relicense 核心**。
 - **反 sso.tax 立场**（安全产品的关键）：**SSO/MFA/基础 RBAC/基础审计/全部告警路径永远免费**；只对**规模/分析/联邦/审计留存导出/企业集成/支持**收费。这与"fail-loud、补充官方渠道"的价值观一致，也是对 Everbridge/xMatters 的营销锐角。
 - **打包**：多架构 distroless 镜像（GHCR）+ 单二进制（GitHub Releases，签名+SBOM）+ docker-compose（小型）+ **Helm chart**（企业；注意 MQTT TCP/WS 需要 TCP Service/LB 或 Ingress passthrough）+ Kustomize（禁 Helm 的安全部门）。`golang-migrate` 启动时 leader-lock 下迁移；备份/恢复命令；**air-gapped bundle**（国防/电力/医疗常需）。
 - **供应链信任信号**（买家会查）：CI 跑 `golangci-lint`/`govulncheck`/`gosec`/Trivy/CodeQL/Dependabot + **SBOM(Syft)** + **Cosign keyless 签名** + **SLSA provenance** + OpenSSF Scorecard 徽章。`SECURITY.md`（私密披露 + SLA）、`CONTRIBUTING/CODE_OF_CONDUCT/GOVERNANCE`、文档站（含**威胁模型** + CAP API 规范 + provisioning 指南 + SLO 文档）。
@@ -146,26 +148,62 @@ migrations/  web-admin/  web-client/  clients/  deploy/{compose,helm,kustomize} 
 
 **Table-stakes（没有就进不了企业评估）**：多租户+RBAC、联系人/群组+**动态属性群组**、**SCIM+SSO**、push/SMS/voice/email 四通道、双向 ack+问责、升级、模板/场景、定时、多语言、分析、**审计+留存**、REST API+webhook、**SOC2 控制**。geo/站点定向在物理安全垂直是 table-stakes。
 
-| 状态 | 项 |
-|---|---|
-| ✅ 已有 | MQTT(retained active/presence/ack 一体)、Ed25519 签名、FAIL-LOUD 心跳、ntfy 兜底、CAP-as-API(设计)、设备 provisioning(设计)、Admin 密码/JWT 鉴权地基、React 后台壳+登录、场景模板雏形 |
-| 🟡 计划 | passkey/TOTP、per-tenant SSO、EEW 双源、确认送达升级、呈现策略、Tauri/Android 原生端 |
-| 🔴 缺(table-stakes) | **多租户/org_id**、**RBAC 权限模型**、**SCIM**、**动态群组+geo/站点定向**、**push/SMS/voice/email worker**、**审计日志**、**Postgres+sqlc 可插拔**、**EMQX 可插拔**、可观测、Helm/供应链 |
+> 下表以**代码实况**为准（2026-08，逐条经构建/测试核对），不是计划表。
+> ✅ 已实现（有测试覆盖）｜🟡 部分（能用，但有明确缺口）｜🔴 未实现。
+> **一句话现状：控制面（org / 成员 / RBAC / 告警数据）已多租户，设备与广播面仍单租户。**
+
+| 能力 | 状态 | 实况 |
+|---|---|---|
+| 协议核心（签名/接受门/MQTT/撤销）| ✅ | Ed25519 over 锁定的 13 字段规范形式；接受门 = 签名 + ±120s 时钟窗 + `id`+`nonce` 去重 + TTL；签名两步撤销 + 5s TTL 清扫；broker ACL。跨语言一致性测试（Go 签 → `web/verify.js` 验，篡改必拒）|
+| FAIL-LOUD A 层 | ✅ | `system/heartbeat` 每 10s 签名心跳（域标签 `hb1`）+ 浏览器看门狗（ok → 30s degraded → 60s offline）+ 时钟漂移横幅 |
+| 多租户 + RBAC | ✅ | `orgs` + `memberships`；`alerts` / `service_accounts` 带 `org_id`；9 项权限（`alert:publish/cancel/read`、`device:read/provision`、`sa:manage`、`member:manage`、`org:manage`、`settings:manage`）**按请求从 membership 解析、不入 JWT**（`requirePerm` 中间件）；`is_superadmin` 与静态 admin token 绕过。**sqlite 与 postgres 两档都有**（同一 `Store` 代码路径）|
+| Postgres RLS | ✅ **已上线** | `Store.BeginOrg` 开事务并 `SET LOCAL app.current_org`（`set_config(...,true)`），`api.Server.inOrg` 包住每次 alerts 读写；策略 `org_isolation ON alerts` 的 `USING` 读墙与 `WITH CHECK` 写墙均在**真 Postgres + 最小权限角色**下验证（`TestPostgres_RLS_LiveViaBeginOrg` / `_WriteCheck` / `PublishHistoryE2E`）。GUC 未设 → NULL → 零行（fail-closed）|
+| 存储可插拔 | ✅ | 一套 `Store` 接口跑 sqlite（modernc，Starter 档）与 PostgreSQL（pgx，Enterprise 档）；方言差异（RLS、`FOR UPDATE SKIP LOCKED`、占位符）在实现内部消化 |
+| 耐久投递（outbox）| ✅ 机制 / 🟡 通道 | 单事务写 `alerts` + `delivery_jobs`（**自研 transactional outbox**）→ worker 领取；at-least-once、按 `(alert, channel, target)` 幂等、指数退避、租约式崩溃恢复、死信；Postgres 用 `FOR UPDATE SKIP LOCKED`；Dashboard 展示 sent/pending/dead + 近期死信。**通道只有 webhook + SMTP** |
+| 人的鉴权 | ✅ | JWT access(2h)/refresh(7d) + 每用户 `TokenVersion` 吊销 + bcrypt；passkey/WebAuthn（usernameless）；TOTP 2FA + 一次性恢复码（AES-256-GCM 静态加密）；OIDC（PKCE + nonce + JIT）；SAML 2.0（IdP-initiated 默认关闭）；凭据端点每 IP 限速 10/min → 429 + Retry-After；OIDC state 常量时间比较 |
+| 机器鉴权 | ✅ | scoped API key（`ahk_` 前缀，只存 SHA-256 hash）+ `requireScope`；CAP ingest 用 `alerts:ingest`，最小权限 |
+| 独立兜底通道 | ✅ | ntfy：自托管实例（全等级）+ 公共 ntfy.sh（仅 critical/emergency，无 PII）|
+| HTTP 传输 | ✅ | gzip 压缩（实测 ~3.1×）+ 非对称缓存策略：`/admin/assets/*` immutable（内容哈希），告警客户端钉死 `no-cache`（它**不带哈希**，浏览器启发式新鲜度可能喂出过期的生命安全客户端），所有 JSON `no-store` |
+| Admin 控制台 | ✅ | React 19 + Ant Design 6 + Vite 8，M3 动态取色（6 预设 / 明暗/跟随），zh-en i18n，`go:embed` 进单二进制 |
+| CI | ✅ | `.github/workflows/ci.yml` 四关卡：sqlite 门（gofmt+vet+build+test）、Postgres service 跑 RLS（带防静默跳过 grep）、Node 22 上的密封签名一致性、SPA typecheck+build |
+| CAP 1.2 | 🟡 | ingest 与 **Cancel** 都已实现——ingest 用确定性 id `cap.AlertID(sender, identifier)`，Cancel 的 `<references>` 重算出同一 id → `CancelByID`，**无需映射表**。**缺 Update-as-supersede、缺 `<area>`/geocode 定向** |
+| SSO | 🟡 **单租户** | OIDC 与 SAML 各**一份全局配置**（来自环境变量），整套安装共用一个 IdP。§7a 设想的**每租户 SSO**（按 state/RelayState 路由到租户连接、vanity URL / 邮箱域 HRD、IdP 组→角色映射）**未实现**；JIT 有 |
+| 来源 | 🟡 | 日本 EEW 经 Wolfx WebSocket（按 EventID 去重），默认关闭（`ALERTHUB_EEW=wolfx`）。**单源**——SPEC-SAFETY §6.1 要求的第二源（P2PQuake）与 renew/serial 升级未做 |
+| 可观测 | 🟡 | Prometheus 计数器（alerts_published / cap_ingest / auth_logins / heartbeats / delivery_enqueued / delivery_attempts）+ `/healthz` + `/readyz`。**全是 counter**——§6 要求的 histogram（扇出 / 投递 / ack 延迟）与 OTel 全链路追踪都没有 |
+| 打包 / 供应链 | 🟡 | 有上面的 CI 与 `make ci` / `make fmt-check`。**无 Dockerfile / compose / Helm / Kustomize，无 SBOM(Syft) / Cosign / SLSA / govulncheck / Scorecard** |
+| 设备 / 广播面 | 🔴 **仍单租户** | `device` 表与 provisioning 未建，设备**没有 `org_id`**；`/api/devices` 返回**全局**在线名册（进程内 map）；MQTT `alerts/active`、`alerts/events` 是**全局主题**。控制面多租户 ≠ 设备面多租户——**这是通向真多租户隔离的头号缺口** |
+| 定向（群组 / 站点 / geo）| 🔴 | §2 的 `site/zone/group/user_profile/alert_recipient` 实体与 §4 的 send-time 解析全部未建；当前发布 = 全局广播 |
+| ack + 升级 | 🔴 | 无 T1/T2/T3 升级状态机、无每设备升级主题、无名册视图、无周演练 cron |
+| push / SMS / voice | 🔴 | outbox 只有 webhook 与 email 两个 sender；四通道 table-stakes 还差 push / SMS / voice 三个 |
+| 自定义角色 | 🔴 | 只有固定基础角色（owner/org_admin/admin/dispatcher/operator/viewer/user）；§3 的 `role` / `role_permission` 权限袋未建 |
+| SCIM 2.0 | 🔴 | 无 `internal/scim`；"离职即时下线"目前只能手工 |
+| 审计日志 | 🔴 | 无 `audit_event` 表、无哈希链、无 SIEM 导出——SOC2/ISO 买家必查项 |
+| 规模 / HA | 🔴 | 无 EMQX 可插拔 `Bus`、无 advisory-lock leader 选举；仍是内嵌 mochi 单进程 |
+| 外部看门狗（off-cluster）| 🔴 | §6 要求的 dead-man's-switch（healthchecks.io / Cloudflare Worker）完全缺失；且 `RunHeartbeat` **恒发 "green"**，不查 broker/store 自身健康——服务端这半边的 fail-loud 尚未闭合 |
+| 原生端 | 🔴 | Android / Tauri 桌面 / iOS 均未开始；Admin SPA 的 `/devices`、`/history`、`/sources` 仍是 "Coming soon" 占位 |
+
+两条刻意的设计取舍，记在这里免得被当成 bug：
+- **`service_accounts` 不进 RLS**：API-key 鉴权必须先按 `token_hash` 查到 key **才知道 org**，先有鸡还是先有蛋——org 作用域策略会让鉴权把自己锁死。它的租户隔离靠 create/list/delete 三处的应用层 `org_id` 过滤（有测试）。因此目前 RLS 只覆盖 `alerts` 一张表。
+- **outbox 是自研的，不是 River**：River 只支持 Postgres，而 Starter 档的产品承诺是**单二进制 + sqlite**。为让两档跑同一份投递语义，队列落成 `Store` 之上的一张 `delivery_jobs` 表（见 §6）。
 
 ---
 
 ## 12. 修订路线图（企业优先级）
 
-| 阶段 | 内容 | 价值 |
+| 阶段 | 内容 | 状态（2026-08） |
 |---|---|---|
-| **E0 多租户地基** | `org_id` 全表 + `org/membership/group` + 默认 org 迁移 + **Store 接口(sqlc, sqlite+postgres)** + RBAC 权限模型 + JWT 加 `tid` + `RequirePerm` + 审计日志骨架 | 一切的前提；不先做后期最贵 |
-| **E1 Admin 鉴权补全** | passkey → TOTP+恢复码 → **per-tenant SSO + JIT + 组角色映射** | 解锁首批企业试点 |
-| **E2 SCIM + 服务账号** | SCIM 2.0（elimity-com/scim）+ scoped API key / OAuth2-CC + CAP ingest API | 解锁大客户（离职下线）+ 集成 |
-| **E3 投递流水线 + 定向** | outbox + River worker（push/SMS/email/voice）+ 动态群组 + 站点/geo 定向 + 确认送达升级 + 名册 | 真正的 MNS 能力 |
-| **E4 规模 + 可观测 + 打包** | EMQX 可插拔 Bus + advisory-lock leader + Prometheus/OTel + Helm + CI 供应链(SBOM/Cosign/SLSA) | 企业可运维 |
-| **E5 原生端 + 物理端点** | Tauri 桌面接管 / Android FSI / DIY beacon | 物理安全垂直差异化 |
+| **E0 多租户地基** | `org_id` 全表 + `org/membership/group` + 默认 org 迁移 + **Store 接口(sqlite+postgres)** + RBAC 权限模型 + `RequirePerm` + 审计日志骨架 | 🟡 **大部完成**：org/membership/RBAC/`requirePerm`、双方言 `Store`、Postgres RLS 已上线。**未做**：审计日志骨架、`site/zone/group/user_profile` 等实体表、自定义角色。偏离设计一处：JWT 只带 `uid/upn/role/tv`，**活动 org 不在 token 里**，由 `X-Org-Id` 头 > API key 的 org > 默认 org 解析 |
+| **E1 Admin 鉴权补全** | passkey → TOTP+恢复码 → **per-tenant SSO + JIT + 组角色映射** | 🟡 passkey、TOTP+恢复码、OIDC（PKCE+nonce+JIT）、SAML 2.0 全部已建，凭据端点已限速。**但 SSO 仍是单租户**（一份全局 IdP 配置），IdP 组→角色映射未做 |
+| **E2 SCIM + 服务账号** | SCIM 2.0 + scoped API key / OAuth2-CC + CAP ingest API | 🟡 scoped API key（hash 存储 + scope）与 CAP 1.2 ingest/Cancel 已建。**SCIM 2.0 与 OAuth2 client-credentials 未做** |
+| **E3 投递流水线 + 定向** | outbox + 每通道 worker（push/SMS/email/voice）+ 动态群组 + 站点/geo 定向 + 确认送达升级 + 名册 | 🟡 **自研 outbox + worker 已建**（幂等、退避、租约恢复、死信），通道 = webhook + SMTP。**push/SMS/voice、动态群组、站点/geo 定向、ack 升级、名册全部未做** |
+| **E4 规模 + 可观测 + 打包** | EMQX 可插拔 Bus + advisory-lock leader + Prometheus/OTel + Helm + CI 供应链(SBOM/Cosign/SLSA) | 🟡 **刚起步**：Prometheus 计数器 + `/healthz`/`/readyz` + 四关卡 CI。**EMQX Bus、leader 选举、histogram/OTel、Helm/compose、SBOM/Cosign/SLSA 都没有** |
+| **E5 原生端 + 物理端点** | Tauri 桌面接管 / Android FSI / DIY beacon | 🔴 未开始 |
 
-> E0 直接改动已建的鉴权地基（加 `tid`/membership/RequirePerm）和 store（接口化）。这是下一步。
+**下一步（按"欠得最贵的债先还"排）**：
+1. **设备面多租户**——给 `device` 加 `org_id` + provisioning，并把 `alerts/active` / `alerts/events` 拆成按 org 的主题。这是唯一还在打脸"多租户"承诺的结构性缺口，而且已上线设备越多、迁移越贵。
+2. **审计日志**（E0 遗留）——SOC2/ISO 评估的硬门槛；append-only + 哈希链的性质决定了它**不能事后补写历史**，越晚做覆盖面越残缺。
+3. **让心跳讲真话 + 外部看门狗**——`RunHeartbeat` 目前恒发 `"green"`，先接上 broker/store 自身健康，再加 off-cluster dead-man's-switch（SPEC-SAFETY P0-B）。看门狗不能与被看者共命运，因此 P0 现在**不算完成**。
+4. **每租户 SSO**（E1 收尾）+ **SCIM**（E2）——大客户 table-stakes，且两者都要改 §7a 的单 ACS/redirect 路由假设，宜一起做。
 
 ---
 
@@ -175,7 +213,7 @@ migrations/  web-admin/  web-client/  clients/  deploy/{compose,helm,kustomize} 
 - sqlite 档无 RLS/geo 定向——文档化缺口，不假装。
 - 每 org 签名密钥（强隔离）需 SPEC v2 的 `kid` 纳入签名（SPEC §8 已预留）。
 - mTLS 全设备诱人但 CRL/OCSP 分发是万级规模的运维税——默认 token、证书可选。
-- 永不为"开源"标签牺牲信任：核心永久 Apache，绝不 relicense。
+- 永不为"开源"标签牺牲信任：核心永久开源（AGPL-3.0），绝不 relicense 为闭源；商业授权只是并行通道。
 
 ---
 *本文件随实现迭代；架构级改动先改这里。研究全文存档于会话 transcript。*
