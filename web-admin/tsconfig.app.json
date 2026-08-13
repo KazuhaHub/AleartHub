@@ -7,6 +7,10 @@
     "types": ["vite/client"],
     "skipLibCheck": true,
 
+    /* Path alias — must mirror the "@" alias in vite.config.ts, otherwise every
+       "@/..." import fails to resolve under tsc (and cascades into implicit-any). */
+    "paths": { "@/*": ["./src/*"] },
+
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,

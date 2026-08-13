@@ -1,36 +1,28 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  AppBar, Avatar, Box, Drawer, IconButton, List, ListItemButton, ListItemIcon,
-  ListItemText, ListSubheader, Menu, MenuItem, Toolbar, Tooltip, Typography, useMediaQuery,
-} from "@mui/material";
-import { useTheme } from "@mui/material/styles";
-import MenuIcon from "@mui/icons-material/Menu";
-import DashboardIcon from "@mui/icons-material/SpaceDashboard";
-import CampaignIcon from "@mui/icons-material/Campaign";
-import DevicesIcon from "@mui/icons-material/Devices";
-import HistoryIcon from "@mui/icons-material/History";
-import SourceIcon from "@mui/icons-material/Sensors";
-import SettingsIcon from "@mui/icons-material/Settings";
-import LightModeIcon from "@mui/icons-material/LightMode";
-import DarkModeIcon from "@mui/icons-material/DarkMode";
-import BrightnessAutoIcon from "@mui/icons-material/BrightnessAuto";
-import PaletteIcon from "@mui/icons-material/Palette";
-import TranslateIcon from "@mui/icons-material/Translate";
+  App as AntApp, Avatar, Button, Drawer, Dropdown, Layout, Menu, Tooltip, Typography, theme,
+} from "antd";
+import type { MenuProps } from "antd";
+import {
+  ApartmentOutlined, BgColorsOutlined, BulbOutlined, DashboardOutlined, DownOutlined,
+  HistoryOutlined, KeyOutlined, LogoutOutlined, MenuOutlined, MobileOutlined, MoonOutlined,
+  NotificationOutlined, RadarChartOutlined, SafetyCertificateOutlined, SettingOutlined,
+  SunOutlined, TranslationOutlined,
+} from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
-import LogoutIcon from "@mui/icons-material/Logout";
-import FingerprintIcon from "@mui/icons-material/Fingerprint";
-import ShieldIcon from "@mui/icons-material/Shield";
-import ApartmentIcon from "@mui/icons-material/Apartment";
-import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import { api, activeOrg, type OrgInfo } from "@/api";
 import { useAppearance } from "@/stores/appearance";
 import { useAuth } from "@/stores/auth";
 import { passkeyRegister } from "@/passkey";
-import { PRESETS } from "@/theme";
+import { PRESETS, buildTokens } from "@/theme";
 import TwoFADialog from "@/components/TwoFADialog";
 
+const { Header, Sider, Content } = Layout;
+
 const DRAWER_W = 256;
+// Mirrors the previous MUI `theme.breakpoints.down("md")` (md = 900px).
+const MOBILE_QUERY = "(max-width: 899.95px)";
 
 type NavItem = { to: string; icon: React.ReactNode; key: string; soon?: boolean };
 type NavSection = { section: string; items: NavItem[] };
@@ -38,33 +30,48 @@ type NavSection = { section: string; items: NavItem[] };
 // Paths are relative to the router basename ("/admin").
 const NAV: NavSection[] = [
   { section: "nav.section.overview", items: [
-    { to: "/", icon: <DashboardIcon />, key: "nav.dashboard" },
+    { to: "/", icon: <DashboardOutlined />, key: "nav.dashboard" },
   ]},
   { section: "nav.section.ops", items: [
-    { to: "/publish", icon: <CampaignIcon />, key: "nav.publish" },
-    { to: "/devices", icon: <DevicesIcon />, key: "nav.devices", soon: true },
-    { to: "/history", icon: <HistoryIcon />, key: "nav.history", soon: true },
+    { to: "/publish", icon: <NotificationOutlined />, key: "nav.publish" },
+    { to: "/devices", icon: <MobileOutlined />, key: "nav.devices", soon: true },
+    { to: "/history", icon: <HistoryOutlined />, key: "nav.history", soon: true },
   ]},
   { section: "nav.section.config", items: [
-    { to: "/sources", icon: <SourceIcon />, key: "nav.sources", soon: true },
-    { to: "/settings", icon: <SettingsIcon />, key: "nav.settings" },
+    { to: "/sources", icon: <RadarChartOutlined />, key: "nav.sources", soon: true },
+    { to: "/settings", icon: <SettingOutlined />, key: "nav.settings" },
   ]},
 ];
 
+function useIsMobile(): boolean {
+  const [mobile, setMobile] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(MOBILE_QUERY).matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY);
+    const onChange = () => setMobile(mq.matches);
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return mobile;
+}
+
 export default function AdminLayout() {
-  const theme = useTheme();
+  const { token } = theme.useToken();
+  const { message } = AntApp.useApp();
   const { t, i18n } = useTranslation();
-  const { mode, setMode, setSeed } = useAppearance();
+  const { seed, mode, setMode, setSeed } = useAppearance();
   const { user, logout } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
-  const mobile = useMediaQuery(theme.breakpoints.down("md"));
+  const mobile = useIsMobile();
   const [open, setOpen] = useState(false);
-  const [colorEl, setColorEl] = useState<null | HTMLElement>(null);
-  const [userEl, setUserEl] = useState<null | HTMLElement>(null);
   const [twofaOpen, setTwofaOpen] = useState(false);
   const [orgs, setOrgs] = useState<OrgInfo[]>([]);
-  const [orgEl, setOrgEl] = useState<null | HTMLElement>(null);
+
+  // M3 surface tones that antd has no token for (see theme/index.ts#buildTokens).
+  const m3 = useMemo(() => buildTokens(seed, mode), [seed, mode]);
 
   useEffect(() => {
     api.orgs().then((list) => {
@@ -79,25 +86,22 @@ export default function AdminLayout() {
   const curOrg = orgs.find((o) => String(o.id) === activeOrg.get());
   const switchOrg = (id: number) => {
     activeOrg.set(String(id));
-    setOrgEl(null);
     window.location.reload(); // re-fetch every view against the new active org
   };
 
   const doLogout = async () => {
-    setUserEl(null);
     await logout();
     nav("/login", { replace: true });
   };
 
   const doAddPasskey = async () => {
-    setUserEl(null);
     const name = window.prompt(t("passkey.namePrompt"), "My passkey");
     if (name === null) return;
     try {
       await passkeyRegister(name || "Passkey");
-      window.alert(t("passkey.added"));
+      message.success(t("passkey.added"));
     } catch {
-      window.alert(t("passkey.failed"));
+      message.error(t("passkey.failed"));
     }
   };
 
@@ -106,132 +110,183 @@ export default function AdminLayout() {
 
   const go = (to: string) => { nav(to); if (mobile) setOpen(false); };
   const cycleMode = () => setMode(mode === "light" ? "dark" : mode === "dark" ? "auto" : "light");
-  const modeIcon = mode === "light" ? <LightModeIcon /> : mode === "dark" ? <DarkModeIcon /> : <BrightnessAutoIcon />;
+  const modeIcon = mode === "light" ? <SunOutlined /> : mode === "dark" ? <MoonOutlined /> : <BulbOutlined />;
 
-  const drawer = (
-    <Box sx={{ width: DRAWER_W, height: "100%", display: "flex", flexDirection: "column" }}>
-      <Toolbar sx={{ gap: 1.5 }}>
-        <Box sx={{ width: 30, height: 30, borderRadius: "50%", bgcolor: "error.main" }} />
-        <Typography variant="h6" fontWeight={500}>AlertHub</Typography>
-      </Toolbar>
-      <List sx={{ flex: 1, overflowY: "auto", px: 1 }}>
-        {NAV.map((sec) => (
-          <li key={sec.section}>
-            <ListSubheader disableSticky sx={{ bgcolor: "transparent", fontSize: 11, letterSpacing: 1, textTransform: "uppercase" }}>
-              {t(sec.section)}
-            </ListSubheader>
-            {sec.items.map((it) => (
-              <ListItemButton
-                key={it.to}
-                selected={isActive(it.to)}
-                onClick={() => go(it.to)}
-                sx={{ borderRadius: 9999, mb: 0.5, "&.Mui-selected": { bgcolor: "primary.main", color: "primary.contrastText", "& .MuiListItemIcon-root": { color: "primary.contrastText" }, "&:hover": { bgcolor: "primary.main" } } }}
-              >
-                <ListItemIcon sx={{ minWidth: 40 }}>{it.icon}</ListItemIcon>
-                <ListItemText primary={t(it.key)} />
-                {it.soon && <Typography variant="caption" sx={{ opacity: 0.6 }}>{t("common.comingSoon")}</Typography>}
-              </ListItemButton>
-            ))}
-          </li>
-        ))}
-      </List>
-    </Box>
+  const navItems: MenuProps["items"] = NAV.map((sec) => ({
+    key: sec.section,
+    type: "group" as const,
+    label: (
+      <span style={{ letterSpacing: 1, textTransform: "uppercase" }}>{t(sec.section)}</span>
+    ),
+    children: sec.items.map((it) => ({
+      key: it.to,
+      icon: it.icon,
+      label: (
+        <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t(it.key)}</span>
+          {it.soon && (
+            <span style={{ fontSize: 12, opacity: 0.6, flex: "0 0 auto" }}>{t("common.comingSoon")}</span>
+          )}
+        </span>
+      ),
+    })),
+  }));
+
+  const selectedKeys = NAV.flatMap((s) => s.items).filter((it) => isActive(it.to)).map((it) => it.to);
+
+  const orgItems: MenuProps["items"] = orgs.map((o) => ({
+    key: String(o.id),
+    icon: <ApartmentOutlined />,
+    label: o.name,
+  }));
+
+  const colorItems: MenuProps["items"] = PRESETS.map((p) => ({
+    key: p.id,
+    label: (
+      <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ width: 16, height: 16, borderRadius: "50%", background: p.seed, flex: "0 0 auto" }} />
+        {p.label}
+      </span>
+    ),
+  }));
+
+  const userItems: MenuProps["items"] = [
+    {
+      key: "identity",
+      type: "group",
+      label: (
+        <span style={{ display: "block", paddingBlock: 4 }}>
+          {/* explicit font sizes: the Menu.groupTitleFontSize token (11) is tuned
+              for the nav rail's section headers and would otherwise apply here. */}
+          <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: token.colorText }}>
+            {user?.upn || "—"}
+          </span>
+          <span style={{ display: "block", fontSize: 12, color: token.colorTextSecondary }}>
+            {user?.role}
+          </span>
+        </span>
+      ),
+    },
+    { type: "divider" },
+    { key: "passkey", icon: <KeyOutlined />, label: t("passkey.add") },
+    { key: "twofa", icon: <SafetyCertificateOutlined />, label: t("twofa.menu") },
+    { key: "logout", icon: <LogoutOutlined />, label: t("logout") },
+  ];
+
+  const onUserMenu: MenuProps["onClick"] = ({ key }) => {
+    if (key === "passkey") void doAddPasskey();
+    else if (key === "twofa") setTwofaOpen(true);
+    else if (key === "logout") void doLogout();
+  };
+
+  const sideNav = (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <div style={{ height: 64, flex: "0 0 auto", display: "flex", alignItems: "center", gap: 12, padding: "0 20px" }}>
+        <div style={{ width: 30, height: 30, borderRadius: "50%", background: token.colorError, flex: "0 0 auto" }} />
+        <Typography.Title level={5} style={{ margin: 0, fontWeight: 500 }}>AlertHub</Typography.Title>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingBottom: 8 }}>
+        <Menu
+          mode="inline"
+          items={navItems}
+          selectedKeys={selectedKeys}
+          onClick={({ key }) => go(key)}
+          style={{ background: "transparent", borderInlineEnd: "none" }}
+        />
+      </div>
+    </div>
   );
 
   return (
-    <Box sx={{ display: "flex", height: "100vh", bgcolor: "background.default" }}>
-      <AppBar position="fixed" sx={{ zIndex: theme.zIndex.drawer + 1 }}>
-        <Toolbar sx={{ gap: 1 }}>
-          {mobile && (
-            <IconButton edge="start" onClick={() => setOpen(true)}><MenuIcon /></IconButton>
-          )}
-          <Typography variant="h6" fontWeight={500} sx={{ flex: 1 }}>{t("app.title")}</Typography>
-          {orgs.length > 1 && (
-            <>
-              <Box
-                onClick={(e) => setOrgEl(e.currentTarget)}
-                sx={{ display: "flex", alignItems: "center", gap: 0.5, cursor: "pointer", px: 1, py: 0.5, borderRadius: 2, "&:hover": { bgcolor: "rgba(255,255,255,0.12)" } }}
-              >
-                <ApartmentIcon fontSize="small" />
-                <Typography variant="body2" sx={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {curOrg?.name || t("org.select")}
-                </Typography>
-                <ArrowDropDownIcon fontSize="small" />
-              </Box>
-              <Menu anchorEl={orgEl} open={!!orgEl} onClose={() => setOrgEl(null)}>
-                {orgs.map((o) => (
-                  <MenuItem key={o.id} selected={String(o.id) === activeOrg.get()} onClick={() => switchOrg(o.id)}>
-                    <ListItemIcon><ApartmentIcon fontSize="small" /></ListItemIcon>
-                    {o.name}
-                  </MenuItem>
-                ))}
-              </Menu>
-            </>
-          )}
-          <Tooltip title="Language">
-            <IconButton onClick={() => i18n.changeLanguage(i18n.language.startsWith("zh") ? "en-US" : "zh-CN")}>
-              <TranslateIcon />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title={t(`appearance.${mode}`)}>
-            <IconButton onClick={cycleMode}>{modeIcon}</IconButton>
-          </Tooltip>
-          <Tooltip title={t("appearance.color")}>
-            <IconButton onClick={(e) => setColorEl(e.currentTarget)}><PaletteIcon /></IconButton>
-          </Tooltip>
-          <Menu anchorEl={colorEl} open={!!colorEl} onClose={() => setColorEl(null)}>
-            {PRESETS.map((p) => (
-              <MenuItem key={p.id} onClick={() => { setSeed(p.seed); setColorEl(null); }}>
-                <Box sx={{ width: 16, height: 16, borderRadius: "50%", bgcolor: p.seed, mr: 1.5 }} />{p.label}
-              </MenuItem>
-            ))}
-          </Menu>
-          <IconButton onClick={(e) => setUserEl(e.currentTarget)} sx={{ ml: 0.5 }}>
-            <Avatar sx={{ width: 32, height: 32, bgcolor: "secondary.main" }}>
+    <Layout style={{ height: "100vh" }}>
+      <Header style={{ display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${token.colorSplit}`, flex: "0 0 auto" }}>
+        {mobile && (
+          <Button type="text" shape="circle" icon={<MenuOutlined />} onClick={() => setOpen(true)} />
+        )}
+        <Typography.Title
+          level={4}
+          style={{ margin: 0, flex: 1, minWidth: 0, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
+          {t("app.title")}
+        </Typography.Title>
+
+        {orgs.length > 1 && (
+          <Dropdown
+            trigger={["click"]}
+            menu={{ items: orgItems, selectable: true, selectedKeys: [activeOrg.get()], onClick: ({ key }) => switchOrg(Number(key)) }}
+          >
+            <Button type="text" icon={<ApartmentOutlined />}>
+              <span style={{ display: "inline-block", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "bottom" }}>
+                {curOrg?.name || t("org.select")}
+              </span>
+              <DownOutlined style={{ fontSize: 12 }} />
+            </Button>
+          </Dropdown>
+        )}
+
+        <Tooltip title="Language">
+          <Button
+            type="text"
+            shape="circle"
+            icon={<TranslationOutlined />}
+            onClick={() => i18n.changeLanguage(i18n.language.startsWith("zh") ? "en-US" : "zh-CN")}
+          />
+        </Tooltip>
+        <Tooltip title={t(`appearance.${mode}`)}>
+          <Button type="text" shape="circle" icon={modeIcon} onClick={cycleMode} />
+        </Tooltip>
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: colorItems,
+            onClick: ({ key }) => {
+              const p = PRESETS.find((x) => x.id === key);
+              if (p) setSeed(p.seed);
+            },
+          }}
+        >
+          {/* span wrapper: Dropdown injects onClick/ref onto its direct child,
+              which a Tooltip would not forward down to the Button. */}
+          <span style={{ display: "inline-flex" }}>
+            <Tooltip title={t("appearance.color")}>
+              <Button type="text" shape="circle" icon={<BgColorsOutlined />} />
+            </Tooltip>
+          </span>
+        </Dropdown>
+
+        <Dropdown trigger={["click"]} menu={{ items: userItems, onClick: onUserMenu }}>
+          <span style={{ cursor: "pointer", display: "inline-flex", marginInlineStart: 4 }}>
+            <Avatar size={32} style={{ backgroundColor: m3.secondary, color: m3.onSecondary }}>
               {(user?.upn || "A").slice(0, 1).toUpperCase()}
             </Avatar>
-          </IconButton>
-          <Menu anchorEl={userEl} open={!!userEl} onClose={() => setUserEl(null)}>
-            <MenuItem disabled sx={{ opacity: "1 !important" }}>
-              <Box>
-                <Typography variant="body2" fontWeight={500}>{user?.upn || "—"}</Typography>
-                <Typography variant="caption" color="text.secondary">{user?.role}</Typography>
-              </Box>
-            </MenuItem>
-            <MenuItem onClick={doAddPasskey}>
-              <ListItemIcon><FingerprintIcon fontSize="small" /></ListItemIcon>
-              {t("passkey.add")}
-            </MenuItem>
-            <MenuItem onClick={() => { setUserEl(null); setTwofaOpen(true); }}>
-              <ListItemIcon><ShieldIcon fontSize="small" /></ListItemIcon>
-              {t("twofa.menu")}
-            </MenuItem>
-            <MenuItem onClick={doLogout}>
-              <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>
-              {t("logout")}
-            </MenuItem>
-          </Menu>
-        </Toolbar>
-      </AppBar>
+          </span>
+        </Dropdown>
+      </Header>
 
-      <Box component="nav" sx={{ width: { md: DRAWER_W }, flexShrink: { md: 0 } }}>
-        <Drawer
-          variant={mobile ? "temporary" : "permanent"}
-          open={mobile ? open : true}
-          onClose={() => setOpen(false)}
-          ModalProps={{ keepMounted: true }}
-          sx={{ "& .MuiDrawer-paper": { width: DRAWER_W, boxSizing: "border-box" } }}
-        >
-          {drawer}
-        </Drawer>
-      </Box>
+      <Layout style={{ minHeight: 0 }}>
+        {mobile ? (
+          <Drawer
+            placement="left"
+            open={open}
+            onClose={() => setOpen(false)}
+            width={DRAWER_W}
+            closable={false}
+            styles={{ body: { padding: 0, background: m3.surfaceContainerLow } }}
+          >
+            {sideNav}
+          </Drawer>
+        ) : (
+          <Sider width={DRAWER_W} style={{ borderInlineEnd: `1px solid ${token.colorSplit}` }}>
+            {sideNav}
+          </Sider>
+        )}
 
-      <Box component="main" sx={{ flexGrow: 1, minWidth: 0, overflowY: "auto", height: "100vh" }}>
-        <Toolbar />
-        <Box sx={{ p: { xs: 2, md: 3 } }}><Outlet /></Box>
-      </Box>
+        <Content style={{ minWidth: 0, overflowY: "auto", padding: mobile ? 16 : 24 }}>
+          <Outlet />
+        </Content>
+      </Layout>
 
       <TwoFADialog open={twofaOpen} onClose={() => setTwofaOpen(false)} />
-    </Box>
+    </Layout>
   );
 }

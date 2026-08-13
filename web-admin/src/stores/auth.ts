@@ -20,7 +20,10 @@ export const useAuth = create<S>((set) => ({
   authed: !!tokens.access(),
   async login(upn, password) {
     const res = await authApi.login(upn, password);
-    if ("status" in res && res.status === "2fa_required") {
+    // "status" is only present on the 2fa_required variant, so it is an exact
+    // discriminant — and unlike the compound check it also narrows `res` to
+    // TokenResp below (LoginResult in @/api).
+    if ("status" in res) {
       return { twoFA: true, pending: res.pending_token };
     }
     tokens.set(res.access_token, res.refresh_token);

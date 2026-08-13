@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Alert, Box, CircularProgress } from "@mui/material";
+import { Alert, Spin } from "antd";
 import { useTranslation } from "react-i18next";
 import { authApi } from "@/api";
 import { useAuth } from "@/stores/auth";
@@ -24,8 +24,8 @@ export default function SSOCallback() {
   }, []);
 
   return (
-    <Box sx={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      {err ? <Alert severity="error">{err}</Alert> : <CircularProgress />}
-    </Box>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      {err ? <Alert type="error" showIcon message={err} /> : <Spin size="large" />}
+    </div>
   );
 }
