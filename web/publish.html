@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AlertHub 发布面板</title>
+  <link rel="stylesheet" href="assets/styles.css" />
+  <style>
+    .wrap { max-width: 720px; margin: 0 auto; padding: 28px 18px 80px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 14px; margin: 0 0 22px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-bottom: 18px; }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+    input, select, textarea {
+      width: 100%; background: var(--panel-2); color: var(--ink);
+      border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; font-size: 15px; font-family: inherit;
+    }
+    textarea { min-height: 64px; resize: vertical; }
+    .row { display: flex; gap: 12px; }
+    .row > div { flex: 1; }
+    .actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+    .quick { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    .quick .btn { font-size: 13px; padding: 8px 12px; }
+    .hist-item { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px; }
+    .hist-item:first-child { border-top: none; }
+    .badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; }
+    .b-notice { background: var(--notice); color: #fff; }
+    .b-warning { background: var(--warning); color: #1a1a1a; }
+    .b-critical { background: var(--critical); color: #fff; }
+    .b-emergency { background: var(--emergency); color: #fff; }
+    .b-cancel { background: #475569; color: #fff; }
+    .hist-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hist-time { color: var(--muted); font-size: 12px; }
+    .link { background: none; border: none; color: #60a5fa; cursor: pointer; font-size: 13px; }
+    #msg { font-size: 13px; min-height: 18px; margin-top: 8px; }
+    .ok { color: #22c55e; } .err { color: #f87171; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AlertHub 发布面板</h1>
+    <p class="sub">填写并发布一条警报。颜色由 severity 决定，处置 action 可留空（按 category 自动填）。打开 <a href="/" target="_blank" style="color:#60a5fa">客户端</a> 另一标签页观察效果。</p>
+
+    <div class="card">
+      <label>管理员 Token（Bearer，存本地）</label>
+      <input id="token" type="password" placeholder="ALERTHUB_ADMIN_TOKEN（默认 dev-admin-token）" />
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>severity 紧急度</label>
+          <select id="severity">
+            <option value="notice">notice 注意（toast）</option>
+            <option value="warning">warning 警告（toast）</option>
+            <option value="critical">critical 严重（全屏）</option>
+            <option value="emergency" selected>emergency 紧急（全屏+警报音+强制确认）</option>
+          </select>
+        </div>
+        <div>
+          <label>category 类别</label>
+          <select id="category">
+            <option value="earthquake" selected>earthquake 地震</option>
+            <option value="fire">fire 火灾</option>
+            <option value="weather">weather 天气</option>
+            <option value="system">system 系统</option>
+            <option value="security">security 安全</option>
+            <option value="custom">custom 自定义</option>
+          </select>
+        </div>
+      </div>
+      <label>标题 title</label>
+      <input id="title" value="正在发生地震" />
+      <label>正文 body</label>
+      <textarea id="body">震中距你约 42 公里，预计 15 秒后到达。</textarea>
+      <label>处置 action（留空按类别自动填）</label>
+      <input id="action" placeholder="（自动）趴下，掩护，抓牢" />
+      <label>ttl 有效期（秒，留空按 severity 默认）</label>
+      <input id="ttl" type="number" placeholder="emergency/critical=120，其它=600" />
+
+      <div class="quick">
+        <span style="color:var(--muted);font-size:13px;align-self:center">快捷：</span>
+        <button class="btn" data-q="eq">🌐 地震 emergency</button>
+        <button class="btn" data-q="fire">🔥 火灾 emergency</button>
+        <button class="btn" data-q="node">🖥 节点失联 critical</button>
+        <button class="btn" data-q="login">🔒 异地登录 notice</button>
+      </div>
+
+      <div class="actions">
+        <button id="send" class="btn btn-primary">发送警报</button>
+      </div>
+      <div id="msg"></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;align-items:center"><strong style="flex:1">历史 / 当前</strong>
+        <button id="refresh" class="link">刷新</button></div>
+      <div id="hist"></div>
+    </div>
+  </div>
+  <script type="module" src="publish.js"></script>
+</body>
+</html>

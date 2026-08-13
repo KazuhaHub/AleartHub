@@ -1,0 +1,24 @@
+AlertHub — open-source enterprise mass-notification / emergency-alert platform
+Copyright (C) 2026 AlertHub contributors
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License v3.0 (AGPL-3.0), as published
+by the Free Software Foundation. See the LICENSE file for the full text.
+
+Dual licensing
+--------------
+The AGPL-3.0 is the license for the open-source community edition. For
+organizations that cannot use AGPL-licensed software (e.g. internal corporate
+policies that prohibit AGPL), a separate COMMERCIAL LICENSE is available — this
+is the standard "AGPL core + commercial dual-license" model used by Grafana,
+Mattermost, and others. Contact the maintainers for commercial terms.
+
+Contributions are accepted under the Developer Certificate of Origin (DCO,
+`Signed-off-by`) together with a Contributor License Agreement (CLA) that grants
+the maintainers the right to offer the dual/commercial license above. This
+preserves the project's ability to serve enterprises while keeping the core
+permanently open under AGPL-3.0.
+
+Future enterprise-only modules (if any) will live in a clearly-separated `/ee`
+directory under their own commercial license; the core alerting path, SSO, MFA,
+RBAC, and basic audit logging remain free under AGPL-3.0 forever (anti-"SSO tax").

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>AlertHub 客户端</title>
+  <link rel="stylesheet" href="assets/styles.css" />
+  <!-- MQTT over WebSocket (UMD global `mqtt`) -->
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
+</head>
+<body>
+  <!-- Arm gate: one gesture unlocks audio + fullscreen + connects (SPEC §9) -->
+  <div id="arm">
+    <h1>AlertHub 客户端</h1>
+    <p>这是一台接收设备。点击下面的按钮启用警报——浏览器要求一次用户手势才能解锁声音与全屏。启用后窗口可放着不管，有警报时会强出现。</p>
+    <button id="armbtn" class="btn btn-primary">启用警报</button>
+    <p style="font-size:13px">提示：把这个标签页保持在前台/独立窗口，效果最好。真正的「盖住其它应用」需要后续的 Tauri 桌面端（见 SPEC §10）。</p>
+  </div>
+
+  <!-- Status bar -->
+  <div id="statusbar" hidden>
+    <span><span id="conn-dot" class="dot"></span> <span id="conn-text">连接中…</span></span>
+    <span class="spacer"></span>
+    <span>设备 <code id="dev-id">—</code></span>
+    <span id="audio-state"></span>
+  </div>
+
+  <!-- FAIL-LOUD: shown when the server heartbeat stops (SPEC-SAFETY §3.1) -->
+  <div id="failloud" hidden></div>
+  <!-- Clock-drift warning (SPEC-SAFETY §3.2) -->
+  <div id="clockwarn" hidden></div>
+
+  <div id="idle" hidden>等待警报…（一切就绪）</div>
+  <div id="toasts"></div>
+
+  <!-- Fullscreen takeover -->
+  <div id="overlay" role="alertdialog" aria-live="assertive">
+    <div class="o-cat" id="o-cat"></div>
+    <div class="o-title" id="o-title"></div>
+    <div class="o-body" id="o-body"></div>
+    <div class="o-action" id="o-action"></div>
+    <div class="o-meta" id="o-meta"></div>
+    <button id="ackbtn">我已知晓 · 确认</button>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Core gate: formatting, vet, build, and the full unit-test suite on the SQLite
+  # (Starter tier) path — the one that must pass on every machine.
+  go:
+    name: Go build + test (sqlite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt (must be clean)
+        run: |
+          unformatted="$(gofmt -l server/)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt-clean:"
+            echo "$unformatted"
+            gofmt -d server/
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./server/...
+
+      - name: go build
+        run: go build ./server/...
+
+      - name: go test
+        run: go test -count=1 ./server/...
+
+  # Enterprise tier: re-runs the suite against real PostgreSQL so the gated
+  # multi-tenant + Row-Level-Security tests actually execute (they skip without a
+  # DSN). This is what proves the RLS wall stays live.
+  postgres:
+    name: Go test (postgres + RLS)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: alerthub
+          POSTGRES_PASSWORD: alerthub
+          POSTGRES_DB: alerthub_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U alerthub"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test (Postgres-gated tests active)
+        env:
+          ALERTHUB_TEST_PG_DSN: postgres://alerthub:alerthub@localhost:5432/alerthub_test?sslmode=disable
+        run: go test -count=1 ./server/...
+
+      - name: assert the RLS tests actually ran (did not silently skip)
+        env:
+          ALERTHUB_TEST_PG_DSN: postgres://alerthub:alerthub@localhost:5432/alerthub_test?sslmode=disable
+        run: |
+          out="$(go test -count=1 -v -run TestPostgres ./server/internal/store/... ./server/internal/api/...)"
+          echo "$out"
+          echo "$out" | grep -q -- '--- PASS: TestPostgres_RLS_LiveViaBeginOrg' \
+            || { echo "::error::RLS live test did not run"; exit 1; }
+          echo "$out" | grep -q -- '--- PASS: TestPostgres_RLS_WriteCheck' \
+            || { echo "::error::RLS write-check test did not run"; exit 1; }
+
+  # Cross-language signing conformance: boots the real server and verifies a
+  # Go-signed envelope with the SAME web/verify.js the browser client uses, so the
+  # SPEC §3 canonical bytes stay byte-identical across Go and JS.
+  conformance:
+    name: Signing conformance (Go <-> JS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Node 22+ has Ed25519 in WebCrypto, so verify.js uses the native path and
+      # never needs its CDN fallback (keeps CI hermetic).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: conformance
+        run: ./scripts/conformance.sh
+
+  # The admin SPA must still build. NOTE: use `npx vite build` (the Makefile's
+  # web-build), NOT `npm run build` — the latter's `tsc -b` step is known-broken
+  # (tsconfig.app.json has no @/* path mapping).
+  web-admin:
+    name: Admin SPA build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-admin/package-lock.json
+
+      - name: npm ci
+        working-directory: web-admin
+        run: npm ci
+
+      - name: vite build
+        run: make web-build
