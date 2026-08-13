@@ -1,32 +1,57 @@
 import { useEffect, useState } from "react";
-import {
-  Box, Card, CardContent, Chip, List, ListItem, ListItemText, Typography,
-} from "@mui/material";
-import FavoriteIcon from "@mui/icons-material/MonitorHeart";
-import DevicesIcon from "@mui/icons-material/Devices";
-import OutboxIcon from "@mui/icons-material/Outbox";
+import { Card, Col, List, Row, Statistic, Tag, Typography, theme } from "antd";
+import { AlertOutlined, MobileOutlined, SendOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import PageHeader from "@/components/PageHeader";
 import { api, type Alert, type Device, type DeliveryStats } from "@/api";
 
+const { Text } = Typography;
+
 function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <Card sx={{ height: "100%" }}>
-      <CardContent>
-        <Typography variant="caption" color="text.secondary">{label}</Typography>
-        <Typography variant="h4" fontWeight={500} sx={{ my: 0.5 }}>{value}</Typography>
-        {hint && <Typography variant="caption" color="text.secondary">{hint}</Typography>}
-      </CardContent>
+    <Card style={{ height: "100%" }} styles={{ body: { padding: 16 } }}>
+      <Statistic
+        title={label}
+        value={value}
+        // antd groups thousands with "," by default; the old MUI markup printed
+        // the raw String(value), so keep it ungrouped.
+        groupSeparator=""
+        styles={{
+          title: { fontSize: 12 },
+          content: { fontSize: 28, fontWeight: 500 },
+        }}
+      />
+      {hint && <Text type="secondary" style={{ fontSize: 12 }}>{hint}</Text>}
     </Card>
   );
 }
 
-const sevColor: Record<string, "default" | "info" | "warning" | "error"> = {
-  notice: "info", warning: "warning", critical: "error", emergency: "error",
+function SectionTitle({ icon, text, extra }: {
+  icon: React.ReactNode; text: string; extra?: React.ReactNode;
+}) {
+  const { token } = theme.useToken();
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap",
+    }}>
+      <span style={{ color: token.colorPrimary, display: "inline-flex", fontSize: 16 }}>{icon}</span>
+      <Typography.Title level={5} style={{ margin: 0, fontWeight: 500 }}>{text}</Typography.Title>
+      {extra && <div style={{ marginInlineStart: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>{extra}</div>}
+    </div>
+  );
+}
+
+// Was a MUI Chip `color`; antd Tag status colours are theme-token driven.
+const sevColor: Record<string, string> = {
+  notice: "processing", warning: "warning", critical: "error", emergency: "error",
 };
+
+const TS: React.CSSProperties = { fontSize: 12, flex: "0 0 auto", marginInlineStart: 12 };
+const ROW: React.CSSProperties = { paddingInline: 0 };
 
 export default function DashboardView() {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   const [history, setHistory] = useState<Alert[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [maxSkew, setMaxSkew] = useState<number>(120);
@@ -50,100 +75,128 @@ export default function DashboardView() {
   const dc = delivery?.counts ?? {};
 
   return (
-    <Box>
+    <>
       <PageHeader title={t("dash.title")} subtitle={t("dash.subtitle")} />
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", md: "repeat(4, 1fr)" }, gap: 2, mb: 3 }}>
-        <Metric label="生效中警报" value={String(active)} />
-        <Metric label="在线设备" value={`${online}/${devices.length}`} hint="fail-loud roster" />
-        <Metric label="历史记录" value={String(history.length)} />
-        <Metric label="MaxSkew" value={`${maxSkew}s`} hint="防重放窗口" />
-      </Box>
 
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 2, alignItems: "start" }}>
-        <Card>
-          <CardContent>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-              <DevicesIcon fontSize="small" color="primary" />
-              <Typography variant="subtitle1" fontWeight={500}>设备名册</Typography>
-            </Box>
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={12} md={6}><Metric label="生效中警报" value={String(active)} /></Col>
+        <Col xs={12} md={6}><Metric label="在线设备" value={`${online}/${devices.length}`} hint="fail-loud roster" /></Col>
+        <Col xs={12} md={6}><Metric label="历史记录" value={String(history.length)} /></Col>
+        <Col xs={12} md={6}><Metric label="MaxSkew" value={`${maxSkew}s`} hint="防重放窗口" /></Col>
+      </Row>
+
+      <Row gutter={[16, 16]} align="top">
+        <Col xs={24} md={12}>
+          <Card>
+            <SectionTitle icon={<MobileOutlined />} text="设备名册" />
             {devices.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">暂无设备上报（启用客户端后出现）</Typography>
+              <Text type="secondary">暂无设备上报（启用客户端后出现）</Text>
             ) : (
-              <List dense>
-                {devices.map((d) => (
-                  <ListItem key={d.device_id} secondaryAction={
-                    <Typography variant="caption" color="text.secondary">
+              <List
+                size="small"
+                split={false}
+                dataSource={devices}
+                rowKey={(d) => d.device_id}
+                renderItem={(d) => (
+                  <List.Item style={ROW}>
+                    <List.Item.Meta
+                      avatar={
+                        <span style={{
+                          display: "block", width: 9, height: 9, borderRadius: "50%", marginTop: 7,
+                          background: d.state === "online" ? token.colorSuccess : token.colorTextDisabled,
+                        }} />
+                      }
+                      title={<span style={{ fontWeight: 400 }}>{d.device_id}</span>}
+                      description={<Text type="secondary" style={{ fontSize: 12 }}>{d.client || d.state}</Text>}
+                    />
+                    <Text type="secondary" style={TS}>
                       {new Date(d.last_seen * 1000).toLocaleTimeString()}
-                    </Typography>
-                  }>
-                    <Box sx={{ width: 9, height: 9, borderRadius: "50%", mr: 1.5,
-                      bgcolor: d.state === "online" ? "success.main" : "text.disabled" }} />
-                    <ListItemText primary={d.device_id} secondary={d.client || d.state} />
-                  </ListItem>
-                ))}
-              </List>
+                    </Text>
+                  </List.Item>
+                )}
+              />
             )}
-          </CardContent>
-        </Card>
+          </Card>
+        </Col>
 
-        <Card>
-          <CardContent>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-              <FavoriteIcon fontSize="small" color="primary" />
-              <Typography variant="subtitle1" fontWeight={500}>最近警报</Typography>
-            </Box>
+        <Col xs={24} md={12}>
+          <Card>
+            <SectionTitle icon={<AlertOutlined />} text="最近警报" />
             {history.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">暂无</Typography>
+              <Text type="secondary">暂无</Text>
             ) : (
-              <List dense>
-                {history.slice(0, 10).map((a) => (
-                  <ListItem key={a.id} secondaryAction={
-                    <Typography variant="caption" color="text.secondary">
+              <List
+                size="small"
+                split={false}
+                dataSource={history.slice(0, 10)}
+                rowKey={(a) => a.id}
+                renderItem={(a) => (
+                  <List.Item style={ROW}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, flex: 1 }}>
+                      <Tag
+                        color={a.type === "cancel" ? undefined : sevColor[a.severity]}
+                        style={{ minWidth: 78, textAlign: "center", marginInlineEnd: 0, flex: "0 0 auto" }}
+                      >
+                        {a.type === "cancel" ? "cancel" : a.severity}
+                      </Tag>
+                      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {a.type === "cancel" ? `解除 ${a.cancels.slice(0, 8)}…` : a.title}
+                      </span>
+                    </div>
+                    <Text type="secondary" style={TS}>
                       {new Date(a.issued_at * 1000).toLocaleTimeString()}
-                    </Typography>
-                  }>
-                    <Chip size="small" label={a.type === "cancel" ? "cancel" : a.severity}
-                      color={a.type === "cancel" ? "default" : sevColor[a.severity]} sx={{ mr: 1.5, minWidth: 78 }} />
-                    <ListItemText primary={a.type === "cancel" ? `解除 ${a.cancels.slice(0, 8)}…` : a.title} />
-                  </ListItem>
-                ))}
-              </List>
+                    </Text>
+                  </List.Item>
+                )}
+              />
             )}
-          </CardContent>
-        </Card>
-      </Box>
+          </Card>
+        </Col>
+      </Row>
 
-      <Card sx={{ mt: 2 }}>
-        <CardContent>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1.5 }}>
-            <OutboxIcon fontSize="small" color="primary" />
-            <Typography variant="subtitle1" fontWeight={500}>投递健康</Typography>
-            <Box sx={{ flex: 1 }} />
-            <Chip size="small" color="success" variant="outlined" label={`已送达 ${dc.sent ?? 0}`} />
-            <Chip size="small" variant="outlined" label={`待投递 ${dc.pending ?? 0}`} />
-            <Chip size="small" color={(dc.dead ?? 0) > 0 ? "error" : "default"} variant={(dc.dead ?? 0) > 0 ? "filled" : "outlined"} label={`失败 ${dc.dead ?? 0}`} />
-          </Box>
-          {!delivery || delivery.dead.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">无失败投递（耐久化 outbox：重试 + 退避 + 死信告警）</Typography>
-          ) : (
-            <List dense>
-              {delivery.dead.map((d, i) => (
-                <ListItem key={`${d.alert_id}-${d.channel}-${i}`} secondaryAction={
-                  <Typography variant="caption" color="text.secondary">
-                    {new Date(d.updated_at * 1000).toLocaleTimeString()}
-                  </Typography>
-                }>
-                  <Chip size="small" color="error" label={d.channel} sx={{ mr: 1.5, minWidth: 78 }} />
-                  <ListItemText
-                    primary={`${d.target} · ${d.attempts} 次尝试`}
-                    secondary={d.last_error}
-                  />
-                </ListItem>
-              ))}
-            </List>
-          )}
-        </CardContent>
+      <Card style={{ marginTop: 16 }}>
+        <SectionTitle
+          icon={<SendOutlined />}
+          text="投递健康"
+          extra={
+            <>
+              <Tag color="success" style={{ marginInlineEnd: 0 }}>{`已送达 ${dc.sent ?? 0}`}</Tag>
+              <Tag style={{ marginInlineEnd: 0 }}>{`待投递 ${dc.pending ?? 0}`}</Tag>
+              <Tag
+                color={(dc.dead ?? 0) > 0 ? "error" : undefined}
+                style={{ marginInlineEnd: 0 }}
+              >{`失败 ${dc.dead ?? 0}`}</Tag>
+            </>
+          }
+        />
+        {!delivery || delivery.dead.length === 0 ? (
+          <Text type="secondary">无失败投递（耐久化 outbox：重试 + 退避 + 死信告警）</Text>
+        ) : (
+          <List
+            size="small"
+            split={false}
+            dataSource={delivery.dead}
+            renderItem={(d) => (
+              <List.Item style={ROW}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0, flex: 1 }}>
+                  <Tag color="error" style={{ minWidth: 78, textAlign: "center", marginInlineEnd: 0, flex: "0 0 auto" }}>
+                    {d.channel}
+                  </Tag>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {`${d.target} · ${d.attempts} 次尝试`}
+                    </div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{d.last_error}</Text>
+                  </div>
+                </div>
+                <Text type="secondary" style={TS}>
+                  {new Date(d.updated_at * 1000).toLocaleTimeString()}
+                </Text>
+              </List.Item>
+            )}
+          />
+        )}
       </Card>
-    </Box>
+    </>
   );
 }

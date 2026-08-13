@@ -1,15 +1,22 @@
-import { createTheme, type Theme } from "@mui/material/styles";
+// Material Design 3 -> Ant Design 6 theme adapter.
+//
+// ./tokens.ts stays framework-agnostic (plain hex strings generated from a seed
+// colour by @material/material-color-utilities). THIS file is the only place
+// that knows about antd. Components should read colours from antd's own tokens
+// (`theme.useToken()`), not from M3 directly -- see buildTokens() for the escape
+// hatch when an M3 surface colour has no antd equivalent.
+import { theme as antdTheme } from "antd";
+import type { ThemeConfig } from "antd";
 import { tokensFromSource, type M3Tokens } from "./tokens";
 
-// Make theme.m3 (full M3 token set) available to components.
-declare module "@mui/material/styles" {
-  interface Theme {
-    m3: M3Tokens;
-  }
-  interface ThemeOptions {
-    m3?: M3Tokens;
-  }
-}
+export type { M3Tokens };
+
+export type AppearanceMode = "light" | "dark" | "auto";
+
+// @fontsource/roboto is no longer installed, so the system stack leads and
+// Roboto is only used when the OS happens to have it.
+export const FONT_FAMILY =
+  '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans", "Microsoft YaHei", sans-serif';
 
 // Color presets, mirroring the Passwall panel's preset approach.
 export const PRESETS: { id: string; label: string; seed: string }[] = [
@@ -21,56 +28,104 @@ export const PRESETS: { id: string; label: string; seed: string }[] = [
   { id: "red", label: "Red", seed: "#B3261E" },
 ];
 
-export function resolveDark(mode: "light" | "dark" | "auto"): boolean {
+export function resolveDark(mode: AppearanceMode): boolean {
   if (mode === "auto") {
-    return typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+    return !!(
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-color-scheme: dark)").matches
+    );
   }
   return mode === "dark";
 }
 
-export function buildTheme(seed: string, mode: "light" | "dark" | "auto"): Theme {
+/**
+ * Raw M3 tokens for a seed + mode. Use ONLY when you need an M3 surface tone
+ * that antd has no token for (surfaceContainer / primaryContainer / tertiary...).
+ * For ordinary colours prefer `const { token } = theme.useToken()`.
+ */
+export function buildTokens(seed: string, mode: AppearanceMode): M3Tokens {
+  return tokensFromSource(seed, resolveDark(mode));
+}
+
+/** Build the ConfigProvider theme config for a seed + mode. */
+export function buildTheme(seed: string, mode: AppearanceMode): ThemeConfig {
   const dark = resolveDark(mode);
   const m = tokensFromSource(seed, dark);
-  return createTheme({
-    m3: m,
-    palette: {
-      mode: dark ? "dark" : "light",
-      primary: { main: m.primary, contrastText: m.onPrimary },
-      secondary: { main: m.secondary, contrastText: m.onSecondary },
-      error: { main: m.error, contrastText: m.onError },
-      background: { default: m.background, paper: m.surfaceContainerLow },
-      text: { primary: m.onSurface, secondary: m.onSurfaceVariant },
-      divider: m.outlineVariant,
-    },
-    shape: { borderRadius: 12 },
-    typography: {
-      fontFamily:
-        'Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans", "Microsoft YaHei", sans-serif',
-      fontWeightMedium: 500,
-      button: { textTransform: "none", fontWeight: 500 },
+  return {
+    algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+    token: {
+      // --- seed tokens: the algorithm derives the rest of the scale from these
+      colorPrimary: m.primary,
+      colorError: m.error,
+      colorInfo: m.primary,
+      colorBgBase: m.background,
+      colorTextBase: m.onSurface,
+      borderRadius: 12,
+      fontFamily: FONT_FAMILY,
+      // --- map/alias overrides: applied on top of the algorithm's output so the
+      //     M3 surface/outline tones win over antd's generated greys.
+      colorBgLayout: m.background,
+      colorBgContainer: m.surfaceContainerLow,
+      colorBgElevated: m.surfaceContainerHigh,
+      colorText: m.onSurface,
+      colorTextSecondary: m.onSurfaceVariant,
+      colorTextTertiary: m.onSurfaceVariant,
+      colorTextDescription: m.onSurfaceVariant,
+      colorTextHeading: m.onSurface,
+      colorBorder: m.outlineVariant,
+      colorBorderSecondary: m.outlineVariant,
+      colorSplit: m.outlineVariant,
     },
     components: {
-      MuiButton: {
-        defaultProps: { disableElevation: true },
-        styleOverrides: { root: { borderRadius: 9999, paddingInline: 18 } },
+      // M3 buttons are pills, flat (the old MUI theme used disableElevation).
+      Button: {
+        borderRadius: 9999,
+        borderRadiusLG: 9999,
+        borderRadiusSM: 9999,
+        paddingInline: 18,
+        paddingInlineLG: 22,
+        fontWeight: 500,
+        primaryShadow: "none",
+        defaultShadow: "none",
+        dangerShadow: "none",
       },
-      MuiPaper: { styleOverrides: { root: { backgroundImage: "none" } } },
-      MuiCard: {
-        styleOverrides: {
-          root: { borderRadius: 16, border: `1px solid ${m.outlineVariant}` },
-        },
-        defaultProps: { elevation: 0 },
+      Card: {
+        borderRadiusLG: 16,
+        colorBorderSecondary: m.outlineVariant,
       },
-      MuiAppBar: {
-        defaultProps: { elevation: 0, color: "default" },
-        styleOverrides: {
-          root: { backgroundColor: m.surfaceContainer, color: m.onSurface, borderBottom: `1px solid ${m.outlineVariant}` },
-        },
+      Layout: {
+        headerBg: m.surfaceContainer,
+        headerColor: m.onSurface,
+        headerHeight: 64,
+        headerPadding: "0 16px",
+        bodyBg: m.background,
+        siderBg: m.surfaceContainerLow,
+        triggerBg: m.surfaceContainerHigh,
+        triggerColor: m.onSurface,
       },
-      MuiDrawer: {
-        styleOverrides: { paper: { backgroundColor: m.surfaceContainerLow, borderColor: m.outlineVariant } },
+      // Nav rail: pill-shaped rows, selected row filled with the primary colour
+      // (matches the previous MUI ListItemButton "Mui-selected" override).
+      Menu: {
+        itemBg: "transparent",
+        subMenuItemBg: "transparent",
+        popupBg: m.surfaceContainerHigh,
+        itemBorderRadius: 9999,
+        itemHeight: 44,
+        itemMarginInline: 8,
+        itemColor: m.onSurfaceVariant,
+        itemHoverColor: m.onSurface,
+        itemSelectedBg: m.primary,
+        itemSelectedColor: m.onPrimary,
+        groupTitleColor: m.onSurfaceVariant,
+        groupTitleFontSize: 11,
+        activeBarWidth: 0,
+        activeBarBorderWidth: 0,
+      },
+      Modal: {
+        contentBg: m.surfaceContainerHigh,
+        headerBg: m.surfaceContainerHigh,
+        titleColor: m.onSurface,
       },
     },
-  });
+  };
 }

@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, TextField, Typography,
-} from "@mui/material";
+import { Alert, Button, Flex, Input, Modal, Typography, theme } from "antd";
 import { QRCodeSVG } from "qrcode.react";
 import { useTranslation } from "react-i18next";
 import { authApi } from "@/api";
@@ -9,6 +7,7 @@ import { authApi } from "@/api";
 type Stage = "loading" | "enroll" | "recovery" | "enabled";
 
 export default function TwoFADialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { token } = theme.useToken();
   const { t } = useTranslation();
   const [stage, setStage] = useState<Stage>("loading");
   const [otpauth, setOtpauth] = useState("");
@@ -45,47 +44,85 @@ export default function TwoFADialog({ open, onClose }: { open: boolean; onClose:
     catch { setErr(t("twofa.badCode")); } finally { setBusy(false); }
   };
 
+  // MUI `label` had no antd equivalent on Input, so the label is rendered by hand.
+  const codeLabel = (
+    <span style={{ display: "block", marginBottom: 4, fontSize: 12, color: token.colorTextSecondary }}>
+      {t("twofa.code")}
+    </span>
+  );
+
+  const footer = [
+    <Button key="close" onClick={onClose}>
+      {stage === "recovery" ? t("twofa.done") : t("twofa.cancel")}
+    </Button>,
+    stage === "enroll" ? (
+      <Button key="enable" type="primary" onClick={enable} loading={busy} disabled={!code}>
+        {t("twofa.enable")}
+      </Button>
+    ) : null,
+    stage === "enabled" ? (
+      <Button key="disable" type="primary" danger onClick={disable} loading={busy} disabled={!code}>
+        {t("twofa.disable")}
+      </Button>
+    ) : null,
+  ];
+
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{t("twofa.title")}</DialogTitle>
-      <DialogContent>
-        {stage === "loading" && <Typography color="text.secondary">…</Typography>}
+    <Modal open={open} onCancel={onClose} title={t("twofa.title")} width={444} footer={footer}>
+      {stage === "loading" && <Typography.Text type="secondary">…</Typography.Text>}
 
-        {stage === "enroll" && (
-          <Stack spacing={2} alignItems="center">
-            <Typography variant="body2" color="text.secondary">{t("twofa.scan")}</Typography>
-            {otpauth && <Box sx={{ bgcolor: "#fff", p: 1.5, borderRadius: 2 }}><QRCodeSVG value={otpauth} size={176} /></Box>}
-            <Typography variant="caption" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>{secret}</Typography>
-            <TextField label={t("twofa.code")} value={code} onChange={(e) => setCode(e.target.value)} fullWidth
-              inputProps={{ inputMode: "numeric", autoComplete: "one-time-code" }} />
-            {err && <Alert severity="error" sx={{ width: "100%" }}>{err}</Alert>}
-          </Stack>
-        )}
+      {stage === "enroll" && (
+        <Flex vertical align="center" gap={16}>
+          <Typography.Text type="secondary">{t("twofa.scan")}</Typography.Text>
+          {otpauth && (
+            <div style={{ background: "#fff", padding: 12, borderRadius: token.borderRadius }}>
+              <QRCodeSVG value={otpauth} size={176} />
+            </div>
+          )}
+          <Typography.Text style={{ fontSize: 12, fontFamily: "monospace", wordBreak: "break-all" }}>
+            {secret}
+          </Typography.Text>
+          <div style={{ alignSelf: "stretch" }}>
+            {codeLabel}
+            <Input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+            />
+          </div>
+          {err && <Alert type="error" showIcon title={err} style={{ alignSelf: "stretch" }} />}
+        </Flex>
+      )}
 
-        {stage === "recovery" && (
-          <Stack spacing={1.5}>
-            <Alert severity="success">{t("twofa.enabledOk")}</Alert>
-            <Typography variant="body2">{t("twofa.saveRecovery")}</Typography>
-            <Box sx={{ fontFamily: "monospace", bgcolor: "action.hover", p: 1.5, borderRadius: 1, columns: 2 }}>
-              {recovery.map((c) => <div key={c}>{c}</div>)}
-            </Box>
-          </Stack>
-        )}
+      {stage === "recovery" && (
+        <Flex vertical gap={12}>
+          <Alert type="success" showIcon title={t("twofa.enabledOk")} />
+          <Typography.Text>{t("twofa.saveRecovery")}</Typography.Text>
+          <div
+            style={{
+              fontFamily: "monospace",
+              background: token.colorFillTertiary,
+              padding: 12,
+              borderRadius: token.borderRadius,
+              columns: 2,
+            }}
+          >
+            {recovery.map((c) => <div key={c}>{c}</div>)}
+          </div>
+        </Flex>
+      )}
 
-        {stage === "enabled" && (
-          <Stack spacing={2}>
-            <Alert severity="info">{t("twofa.alreadyEnabled")}</Alert>
-            <TextField label={t("twofa.code")} value={code} onChange={(e) => setCode(e.target.value)} fullWidth
-              inputProps={{ inputMode: "numeric" }} />
-            {err && <Alert severity="error">{err}</Alert>}
-          </Stack>
-        )}
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>{stage === "recovery" ? t("twofa.done") : t("twofa.cancel")}</Button>
-        {stage === "enroll" && <Button variant="contained" onClick={enable} disabled={busy || !code}>{t("twofa.enable")}</Button>}
-        {stage === "enabled" && <Button color="error" variant="contained" onClick={disable} disabled={busy || !code}>{t("twofa.disable")}</Button>}
-      </DialogActions>
-    </Dialog>
+      {stage === "enabled" && (
+        <Flex vertical gap={16}>
+          <Alert type="info" showIcon title={t("twofa.alreadyEnabled")} />
+          <div>
+            {codeLabel}
+            <Input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" />
+          </div>
+          {err && <Alert type="error" showIcon title={err} />}
+        </Flex>
+      )}
+    </Modal>
   );
 }
