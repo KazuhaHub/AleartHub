@@ -124,8 +124,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/admin", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})
-	mux.Handle("/", http.FileServer(http.Dir(s.WebDir))) // lean alert client
-	return mux
+	// The lean alert client. Its files are NOT content-hashed, so it is pinned to
+	// revalidate-always: a stale life-safety client must never be served from a
+	// browser's heuristic cache. See httpcache.go.
+	mux.Handle("/", withCacheControl(cacheRevalidate, http.FileServer(http.Dir(s.WebDir))))
+	// Compression wraps the whole mux (it no-ops for clients that don't offer gzip,
+	// for Range requests, and for already-compressed types like woff2).
+	return withGzip(mux)
 }
 
 // adminHandler serves the embedded React admin SPA with history-mode fallback.
@@ -148,6 +153,11 @@ func (s *Server) adminHandler() http.Handler {
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p != "" {
 			if _, err := fs.Stat(sub, p); err == nil {
+				// Vite content-hashes everything under assets/, so those URLs are
+				// immutable — a rebuild changes the filename, never the bytes.
+				if strings.HasPrefix(p, "assets/") {
+					w.Header().Set("Cache-Control", cacheImmutable)
+				}
 				fileServer.ServeHTTP(w, r) // real file (hashed asset, favicon, …)
 				return
 			}
@@ -462,5 +472,9 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// Every JSON response here is either per-request state, authenticated data, or
+	// the /pubkey bootstrap (trust anchor + broker password) — none of it may be
+	// written to a browser or proxy cache.
+	w.Header().Set("Cache-Control", cacheNoStore)
 	_ = json.NewEncoder(w).Encode(v)
 }

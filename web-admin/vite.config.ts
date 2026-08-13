@@ -17,6 +17,20 @@ export default defineConfig({
   build: {
     outDir: "../server/internal/webadmin/dist", // go:embed target
     emptyOutDir: true,
-    // Vite 8 / rolldown auto-splits vendor chunks; an object manualChunks is rejected.
+    // Split the rarely-changing dependencies out of the app bundle. The Go server
+    // serves /admin/assets/* as immutable (content-hashed), so keeping antd and
+    // React in their own chunks means an app-code change re-downloads only the
+    // small app chunk — the ~1 MB vendor chunk keeps its hash and stays cached.
+    // NB: Vite 8 / rolldown rejects an object-form manualChunks; use the function.
+    rolldownOptions: {
+      output: {
+        advancedChunks: {
+          groups: [
+            { name: "antd", test: /node_modules[\\/](antd|@ant-design|rc-[^\\/]+)[\\/]/ },
+            { name: "react", test: /node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/ },
+          ],
+        },
+      },
+    },
   },
 });
