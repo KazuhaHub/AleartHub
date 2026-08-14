@@ -93,7 +93,22 @@ func (s *Store) AppendAudit(e *AuditEntry) error {
 	// chain onto the same predecessor and fork the chain.
 	s.auditMu.Lock()
 	defer s.auditMu.Unlock()
+	return s.appendAuditLocked(e)
+}
 
+// appendAuditLocked is AppendAudit's body; the caller must hold auditMu. It
+// exists so a prune can record itself without releasing the lock and racing a
+// concurrent writer onto the entry it is about to remove.
+func (s *Store) appendAuditLocked(e *AuditEntry) error {
+	if e.Action == "" {
+		return errors.New("audit: action required")
+	}
+	if e.At == 0 {
+		e.At = time.Now().Unix()
+	}
+	if e.ActorType == "" {
+		e.ActorType = ActorSystem
+	}
 	var prev string
 	err := s.queryRow(`SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`).Scan(&prev)
 	if err != nil && !isNoRows(err) {
@@ -160,7 +175,12 @@ func (s *Store) VerifyAuditChain() (AuditChainResult, error) {
 	}
 	defer rows.Close()
 
-	prev := ""
+	// Start from the anchor left by the last prune (empty on a never-pruned log),
+	// so retention does not permanently look like tampering.
+	prev, err := s.getSetting(auditAnchorKey)
+	if err != nil {
+		return AuditChainResult{}, err
+	}
 	n := 0
 	for rows.Next() {
 		e, err := scanAudit(rows)

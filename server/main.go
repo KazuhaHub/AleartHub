@@ -272,6 +272,32 @@ func main() {
 	}, srv.SelfCheckHealthy)
 	go wd.Run(ctx)
 
+	// Audit retention. An append-only log grows without bound, which on a
+	// self-hosted box eventually fills the disk — so retention is a safety
+	// feature, not housekeeping. Pruning records itself and anchors the chain so
+	// a shortened log still verifies (see store.PruneAudit).
+	if days := parseDuration(env("ALERTHUB_AUDIT_RETENTION", ""), 0); days > 0 {
+		go func() {
+			t := time.NewTicker(6 * time.Hour)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					cutoff := time.Now().Add(-days).Unix()
+					n, err := st.PruneAudit(cutoff, "retention")
+					if err != nil {
+						slog.Error("audit prune failed", "err", err)
+					} else if n > 0 {
+						slog.Info("audit pruned", "entries", n, "older_than", days.String())
+					}
+				}
+			}
+		}()
+		slog.Info("audit retention enabled", "keep", days.String())
+	}
+
 	// SIEM export: ship the audit trail off-host so it survives a compromise of
 	// this one (ARCHITECTURE §8). Disabled unless a collector URL is configured.
 	siemExp := siem.New(st, siem.Config{

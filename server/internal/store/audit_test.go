@@ -168,3 +168,106 @@ func TestAudit_IdenticalEntriesGetDistinctHashes(t *testing.T) {
 		t.Fatalf("second entry must link to the first: prev=%q first=%q", b.PrevHash, a.Hash)
 	}
 }
+
+// --- retention ---------------------------------------------------------------
+
+// TestAudit_PruneKeepsChainVerifiable is the point of the anchor: retention must
+// not leave the log permanently reporting "tampered", or the operator learns to
+// ignore the one alarm that means someone really did tamper with it.
+func TestAudit_PruneKeepsChainVerifiable(t *testing.T) {
+	s := openTestSQLite(t)
+	org, _ := s.EnsureDefaultOrg()
+	old := int64(1000)
+	for i := 0; i < 4; i++ { // old entries
+		if err := s.AppendAudit(&AuditEntry{OrgID: org, At: old + int64(i), Action: "alert.publish"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 3; i++ { // recent entries
+		if err := s.AppendAudit(&AuditEntry{OrgID: org, At: 9000 + int64(i), Action: "auth.login"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := s.PruneAudit(5000, "test")
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("pruned %d, want 4", n)
+	}
+	res, err := s.VerifyAuditChain()
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if !res.OK {
+		t.Fatalf("a pruned chain must still verify, got %+v", res)
+	}
+}
+
+// The prune must itself be in the record: shortening the audit trail is exactly
+// the kind of action an audit trail exists to capture.
+func TestAudit_PruneRecordsItself(t *testing.T) {
+	s := openTestSQLite(t)
+	org, _ := s.EnsureDefaultOrg()
+	_ = s.AppendAudit(&AuditEntry{OrgID: org, At: 1000, Action: "alert.publish"})
+	_ = s.AppendAudit(&AuditEntry{OrgID: org, At: 9000, Action: "auth.login"})
+
+	if _, err := s.PruneAudit(5000, "retention-worker"); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	rows, err := s.query(`SELECT action, actor_name FROM audit_log WHERE action = 'audit.prune'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var action, actor string
+		_ = rows.Scan(&action, &actor)
+		if action == "audit.prune" && actor == "retention-worker" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the prune itself was not recorded")
+	}
+}
+
+// Tampering after a prune must STILL be detected — the anchor must not become a
+// way to launder edits.
+func TestAudit_PrunedChainStillDetectsTampering(t *testing.T) {
+	s := openTestSQLite(t)
+	org, _ := s.EnsureDefaultOrg()
+	_ = s.AppendAudit(&AuditEntry{OrgID: org, At: 1000, Action: "alert.publish"})
+	for i := 0; i < 3; i++ {
+		_ = s.AppendAudit(&AuditEntry{OrgID: org, At: 9000 + int64(i), Action: "auth.login", ActorName: "alice"})
+	}
+	if _, err := s.PruneAudit(5000, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := s.VerifyAuditChain(); !res.OK {
+		t.Fatal("setup: pruned chain should verify")
+	}
+	if _, err := s.exec(`UPDATE audit_log SET actor_name = 'mallory' WHERE actor_name = 'alice'`); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := s.VerifyAuditChain()
+	if res.OK {
+		t.Fatal("SECURITY: tampering after a prune went undetected")
+	}
+}
+
+// Pruning with nothing old enough is a no-op and must not disturb the chain.
+func TestAudit_PruneNothingToDo(t *testing.T) {
+	s := openTestSQLite(t)
+	org, _ := s.EnsureDefaultOrg()
+	_ = s.AppendAudit(&AuditEntry{OrgID: org, At: 9000, Action: "auth.login"})
+	n, err := s.PruneAudit(1000, "test")
+	if err != nil || n != 0 {
+		t.Fatalf("prune = %d, %v; want 0, nil", n, err)
+	}
+	if res, _ := s.VerifyAuditChain(); !res.OK {
+		t.Fatal("a no-op prune must leave the chain intact")
+	}
+}

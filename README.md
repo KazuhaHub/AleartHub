@@ -68,6 +68,7 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | `ALERTHUB_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `ALERTHUB_SIEM_URL` | （空=禁用）| 审计日志外送采集端点（POST JSON）。至少一次投递，采集端需按条目 `id` 去重 |
 | `ALERTHUB_SIEM_TOKEN` | | 采集端 bearer token |
+| `ALERTHUB_AUDIT_RETENTION` | （空=永久保留）| 审计日志保留时长，Go duration（如 `2160h` ≈ 90 天）。剪枝会**记录自身**并锚定哈希链，剪后仍可验链 |
 | `ALERTHUB_WATCHDOG_URL` | （空=禁用）| **外部 dead-man switch**（healthchecks.io / CF Worker）。健康时打点，降级时打 `<url>/fail`，进程死亡则静默 → 由第三方超时告警 |
 | `ALERTHUB_WATCHDOG_INTERVAL` | `60s` | 打点间隔，需明显短于对端的宽限期 |
 
@@ -195,7 +196,7 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | 管理控制台：React 19 + Ant Design 6 + Vite 8，M3 动态取色（6 套预设 / 明暗自动），中英 i18n，go:embed 内嵌 | ✅ **全部视图已实装**：仪表盘 / 发布 / 设备 / 历史 / 来源 / 审计 / 设置，无占位页 |
 | CI：4 个 job（SQLite 门禁 / Postgres RLS / Node 22 签名一致性 / SPA typecheck + build） | ✅ |
 | **设备与广播面仍是单租户**：`/api/devices` 返回全局在线名册，`alerts/active`、`alerts/events` 是全局 topic，设备没有 `org_id`（设备下发未建）。**即：控制面多租户，设备面单租户** | ❌ |
-| **审计日志**：`audit_log` 哈希链（篡改可检出）、append-only、`GET /api/audit` + `/api/audit/verify` | ✅ 已实现（仍缺 SIEM 导出与留存策略）|
+| **审计日志**：`audit_log` 哈希链（篡改可检出）、append-only、`GET /api/audit` + `/api/audit/verify`、**SIEM 外送**（持久化游标，至少一次）、**留存剪枝**（记录锚点，剪后仍可验链） | ✅ 已实现 |
 | SCIM 2.0、EMQX 集群总线、leader 选举 | ❌ 未开始 |
 
 ---
