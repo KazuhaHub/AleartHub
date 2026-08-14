@@ -731,3 +731,90 @@ func TestSources_RequiresAuth(t *testing.T) {
 		t.Fatalf("unauth sources = %d, want 401", w.Code)
 	}
 }
+
+// --- ack roster (SPEC §5.3) --------------------------------------------------
+
+// TestOnAck_TakesIdentityFromTopic is the security property: the broker ACL only
+// lets a device write alerts/+/ack/<its own id>, so the TOPIC is the part that
+// cannot be forged. A payload claiming to be another device must not be believed.
+func TestOnAck_TakesIdentityFromTopic(t *testing.T) {
+	ts := newTestServer(t)
+	ts.srv.OnAck("alerts/a-1/ack/dev-1",
+		[]byte(`{"alert_id":"a-1","device_id":"dev-EVIL","ack_at":1765238400}`))
+
+	acks, err := ts.srv.Store.ListAcks(ts.srv.DefaultOrgID, "a-1")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(acks) != 1 {
+		t.Fatalf("want 1 ack, got %d", len(acks))
+	}
+	if acks[0].DeviceID != "dev-1" {
+		t.Fatalf("SECURITY: ack attributed to %q from the payload; the topic said dev-1", acks[0].DeviceID)
+	}
+}
+
+// A retained ack is re-delivered on every reconnect, so recording must be
+// idempotent or the roster grows a duplicate row per reconnect.
+func TestOnAck_IsIdempotent(t *testing.T) {
+	ts := newTestServer(t)
+	for i := 0; i < 3; i++ {
+		ts.srv.OnAck("alerts/a-2/ack/dev-9", []byte(`{"ack_at":1765238400}`))
+	}
+	n, err := ts.srv.Store.CountAcks(ts.srv.DefaultOrgID, "a-2")
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("re-delivered ack stored %d rows, want 1", n)
+	}
+}
+
+func TestOnAck_IgnoresMalformedTopics(t *testing.T) {
+	ts := newTestServer(t)
+	for _, topic := range []string{
+		"alerts/a/ack", "status/dev-1", "alerts//ack/dev-1", "alerts/a/notack/dev-1",
+	} {
+		ts.srv.OnAck(topic, []byte(`{}`))
+	}
+	if n, _ := ts.srv.Store.CountAcks(ts.srv.DefaultOrgID, "a"); n != 0 {
+		t.Fatalf("malformed topics produced %d acks", n)
+	}
+}
+
+// TestAckRoster_ShowsWhoHasNotAcked: during an incident the useful number is who
+// is online and still silent, so the endpoint computes it rather than making the
+// caller join the two lists.
+func TestAckRoster_ShowsWhoHasNotAcked(t *testing.T) {
+	ts := newTestServer(t)
+	ts.srv.OnPresence("status/dev-1", []byte(`{"device_id":"dev-1","state":"online"}`))
+	ts.srv.OnPresence("status/dev-2", []byte(`{"device_id":"dev-2","state":"online"}`))
+	ts.srv.OnPresence("status/dev-3", []byte(`{"device_id":"dev-3","state":"offline"}`))
+	ts.srv.OnAck("alerts/a-3/ack/dev-1", []byte(`{"ack_at":1765238400}`))
+
+	w := ts.req(t, http.MethodGet, "/api/alerts/acks?id=a-3", nil, adminHdr())
+	if w.Code != http.StatusOK {
+		t.Fatalf("acks = %d; body=%s", w.Code, w.Body.String())
+	}
+	var got ackRoster
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.AckCount != 1 || len(got.Acked) != 1 || got.Acked[0].DeviceID != "dev-1" {
+		t.Fatalf("acked = %+v", got.Acked)
+	}
+	// dev-2 is online and silent; dev-3 is offline so it is not "pending".
+	if len(got.Pending) != 1 || got.Pending[0] != "dev-2" {
+		t.Fatalf("pending = %v, want [dev-2] (online but not yet acknowledged)", got.Pending)
+	}
+}
+
+func TestAckRoster_RequiresIDAndAuth(t *testing.T) {
+	ts := newTestServer(t)
+	if w := ts.req(t, http.MethodGet, "/api/alerts/acks?id=x", nil, nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth = %d, want 401", w.Code)
+	}
+	if w := ts.req(t, http.MethodGet, "/api/alerts/acks", nil, adminHdr()); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing id = %d, want 400", w.Code)
+	}
+}

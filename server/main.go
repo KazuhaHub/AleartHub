@@ -245,7 +245,12 @@ func main() {
 	}
 
 	if err := b.Subscribe("status/#", srv.OnPresence); err != nil {
-		log.Printf("presence subscribe: %v", err)
+		slog.Error("presence subscribe failed", "err", err)
+	}
+	// SPEC §5.3: collect the acks clients have always been publishing. Without
+	// this subscription the "who has confirmed" roster does not exist.
+	if err := b.Subscribe(api.TopicAckFilter, srv.OnAck); err != nil {
+		slog.Error("ack subscribe failed", "err", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

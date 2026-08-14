@@ -219,6 +219,11 @@ func (s *Store) migrateSQLite() error {
 			prev_hash TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS audit_log_org ON audit_log(org_id, id)`,
+		`CREATE TABLE IF NOT EXISTS alert_acks (
+			org_id INTEGER NOT NULL, alert_id TEXT NOT NULL, device_id TEXT NOT NULL,
+			ack_at INTEGER NOT NULL, by_who TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (alert_id, device_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS cursors (
 			name TEXT PRIMARY KEY, position INTEGER NOT NULL DEFAULT 0
 		)`,
@@ -306,6 +311,11 @@ func (s *Store) migratePostgres() error {
 			prev_hash TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS audit_log_org ON audit_log(org_id, id)`,
+		`CREATE TABLE IF NOT EXISTS alert_acks (
+			org_id BIGINT NOT NULL, alert_id TEXT NOT NULL, device_id TEXT NOT NULL,
+			ack_at BIGINT NOT NULL, by_who TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (alert_id, device_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS cursors (
 			name TEXT PRIMARY KEY, position BIGINT NOT NULL DEFAULT 0
 		)`,

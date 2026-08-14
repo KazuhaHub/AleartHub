@@ -124,6 +124,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/cancel", s.requirePerm(auth.PermAlertCancel, s.handleCancel))
 	mux.HandleFunc("/api/history", s.requirePerm(auth.PermAlertRead, s.handleHistory))
 	mux.HandleFunc("/api/devices", s.requirePerm(auth.PermDeviceRead, s.handleDevices))
+	// Who acknowledged an alert, and who is online but has not (SPEC §5.3).
+	mux.HandleFunc("/api/alerts/acks", s.requirePerm(auth.PermAlertRead, s.handleAcks))
 	mux.HandleFunc("/api/delivery/stats", s.requirePerm(auth.PermAlertRead, s.handleDeliveryStats))
 	mux.HandleFunc("/api/orgs", s.requireRole(auth.RoleUser, s.handleOrgs))
 	// Audit trail (RBAC: settings:manage; verifying the global chain is super-only).
