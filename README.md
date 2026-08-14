@@ -223,7 +223,7 @@ ALERTHUB_TEST_PG_DSN="postgres://$USER@localhost:5432/alerthub_test?sslmode=disa
 
 不设 `ALERTHUB_TEST_PG_DSN` 时这些用例干净跳过（CI 里有反静默跳过的 grep 断言）。
 
-覆盖诚实说明：除 `metrics`、`webadmin`、`main` 外每个包都有测试文件；但 **`store` 包的测试全部是 Postgres 门控的**——不设 DSN 时该包实际执行 0 个用例，SQLite 存储路径目前只被 `api` 包的集成测试间接覆盖。
+覆盖诚实说明：除 `metrics`、`webadmin`、`main` 外每个包都有测试。`store` 同时覆盖两种方言——`store_test.go` 跑 SQLite（默认门，74.5%），`pg_test.go` 跑 Postgres + RLS（需 DSN，合计 85.7%）。
 
 ---
 
