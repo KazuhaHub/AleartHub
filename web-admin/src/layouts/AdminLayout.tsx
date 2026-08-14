@@ -34,8 +34,8 @@ const NAV: NavSection[] = [
   ]},
   { section: "nav.section.ops", items: [
     { to: "/publish", icon: <NotificationOutlined />, key: "nav.publish" },
-    { to: "/devices", icon: <MobileOutlined />, key: "nav.devices", soon: true },
-    { to: "/history", icon: <HistoryOutlined />, key: "nav.history", soon: true },
+    { to: "/devices", icon: <MobileOutlined />, key: "nav.devices" },
+    { to: "/history", icon: <HistoryOutlined />, key: "nav.history" },
   ]},
   { section: "nav.section.config", items: [
     { to: "/sources", icon: <RadarChartOutlined />, key: "nav.sources", soon: true },
