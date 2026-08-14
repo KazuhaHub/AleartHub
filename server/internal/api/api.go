@@ -405,15 +405,24 @@ func (s *Server) RunSweeper(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.mu.Lock()
-			if s.active != nil && time.Now().Unix() > s.active.IssuedAt+s.active.TTL {
-				s.active = nil
-				if err := s.Broker.Publish(TopicActive, []byte{}, true, 1); err != nil {
-					log.Printf("sweeper clear active: %v", err)
-				}
-			}
-			s.mu.Unlock()
+			s.sweepExpiredActive()
 		}
+	}
+}
+
+// sweepExpiredActive is one pass of the TTL self-heal (SPEC §5.2): once the
+// active alert's TTL has elapsed, clear the retained slot so a client that
+// reconnects later does not resurrect a stale emergency. Split out of the ticker
+// loop so it can be driven directly by a test instead of waiting for a tick.
+func (s *Server) sweepExpiredActive() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active == nil || time.Now().Unix() <= s.active.IssuedAt+s.active.TTL {
+		return
+	}
+	s.active = nil
+	if err := s.Broker.Publish(TopicActive, []byte{}, true, 1); err != nil {
+		log.Printf("sweeper clear active: %v", err)
 	}
 }
 

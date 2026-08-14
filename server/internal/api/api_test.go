@@ -23,7 +23,9 @@ import (
 	"github.com/kazuha/alerthub/server/internal/auth"
 	"github.com/kazuha/alerthub/server/internal/broker"
 	"github.com/kazuha/alerthub/server/internal/delivery"
+	"github.com/kazuha/alerthub/server/internal/passkey"
 	"github.com/kazuha/alerthub/server/internal/store"
+	"github.com/kazuha/alerthub/server/internal/twofa"
 )
 
 const testAdminToken = "test-admin-token"
@@ -75,9 +77,19 @@ func newTestServerWithStore(t *testing.T, st *store.Store) *testServer {
 	if _, err := rand.Read(secret); err != nil {
 		t.Fatalf("secret: %v", err)
 	}
+	kek := make([]byte, 32)
+	if _, err := rand.Read(kek); err != nil {
+		t.Fatalf("kek: %v", err)
+	}
+	pk, err := passkey.New(st, "localhost", "http://localhost:8080", "AlertHub")
+	if err != nil {
+		t.Fatalf("passkey: %v", err)
+	}
 	srv := &Server{
 		Broker:       b,
 		Store:        st,
+		TwoFA:        twofa.New(st, kek, "AlertHub"),
+		Passkey:      pk,
 		Priv:         priv,
 		PubB64url:    base64.RawURLEncoding.EncodeToString(pub),
 		AdminToken:   testAdminToken,

@@ -25,7 +25,17 @@ func (s *Server) OnPresence(topic string, payload []byte) {
 	}
 	var p Presence
 	if len(payload) > 0 {
-		_ = json.Unmarshal(payload, &p)
+		// A payload we cannot parse must NOT mutate the roster. Discarding the
+		// error here used to store a zero-value Presence with an empty state,
+		// which OVERWROTE the device's real status — and since the broker ACL
+		// lets a device write its own status/<id>, a buggy or compromised client
+		// could blank itself out of the "who can receive an alert" roster.
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return
+		}
+		if p.State != "online" && p.State != "offline" {
+			return // unrecognised state is as untrustworthy as unparseable bytes
+		}
 	} else {
 		p.State = "offline" // empty retained = cleared
 	}

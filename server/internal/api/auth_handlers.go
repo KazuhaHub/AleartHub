@@ -90,6 +90,10 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if s.TwoFA == nil {
+		http.Error(w, "2fa not configured", http.StatusServiceUnavailable)
+		return
+	}
 	if !s.TwoFA.VerifyLogin(u.ID, req.Code) {
 		http.Error(w, "invalid code", http.StatusUnauthorized)
 		return
@@ -105,7 +109,9 @@ func (s *Server) handle2FAVerify(w http.ResponseWriter, r *http.Request) {
 // GET /api/auth/2fa/status (session)
 func (s *Server) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
 	c := claimsFrom(r)
-	if c == nil {
+	// A nil TwoFA means the feature was never wired; report "not enabled" rather
+	// than panicking. handleLogin already treats nil the same way.
+	if c == nil || s.TwoFA == nil {
 		writeJSON(w, map[string]any{"enabled": false})
 		return
 	}
@@ -118,6 +124,10 @@ func (s *Server) handle2FABegin(w http.ResponseWriter, r *http.Request) {
 	c := claimsFrom(r)
 	if c == nil {
 		http.Error(w, "session required", http.StatusBadRequest)
+		return
+	}
+	if s.TwoFA == nil {
+		http.Error(w, "2fa not configured", http.StatusServiceUnavailable)
 		return
 	}
 	u, err := s.Store.GetUserByID(c.UserID)
@@ -144,6 +154,10 @@ func (s *Server) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session required", http.StatusBadRequest)
 		return
 	}
+	if s.TwoFA == nil {
+		http.Error(w, "2fa not configured", http.StatusServiceUnavailable)
+		return
+	}
 	var req codeReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -162,6 +176,10 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	c := claimsFrom(r)
 	if c == nil {
 		http.Error(w, "session required", http.StatusBadRequest)
+		return
+	}
+	if s.TwoFA == nil {
+		http.Error(w, "2fa not configured", http.StatusServiceUnavailable)
 		return
 	}
 	var req codeReq
