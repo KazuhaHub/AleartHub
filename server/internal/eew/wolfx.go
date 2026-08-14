@@ -41,6 +41,10 @@ type Event struct {
 	Action   string
 	IsCancel bool
 	IsTest   bool
+	// IsUpgrade marks a report whose intensity was revised upward for an event
+	// already published. It is re-issued under the same alert id, so SPEC §5.2
+	// makes the client present it again rather than extend it quietly.
+	IsUpgrade bool
 }
 
 func rank(s string) int {

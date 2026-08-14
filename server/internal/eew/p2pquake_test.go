@@ -155,3 +155,52 @@ func itoa(n int) string {
 	}
 	return string(b[i:])
 }
+
+// --- intensity upgrades ------------------------------------------------------
+
+// TestDeduper_UpgradePassesThrough is the safety case: a quake first reported as
+// 震度4 and revised to 6弱 must reach people again. Suppressing it would leave
+// them acting on the wrong instruction.
+func TestDeduper_UpgradePassesThrough(t *testing.T) {
+	d := eew.NewDeduper()
+
+	emit, upgrade := d.Emit("q1", "critical")
+	if !emit || upgrade {
+		t.Fatalf("first report: emit=%v upgrade=%v, want true/false", emit, upgrade)
+	}
+	emit, upgrade = d.Emit("q1", "emergency")
+	if !emit || !upgrade {
+		t.Fatalf("upward revision: emit=%v upgrade=%v, want true/true", emit, upgrade)
+	}
+}
+
+// A repeat at the same severity, or a downgrade, must stay suppressed —
+// re-alarming for no new information is how people learn to ignore alerts.
+func TestDeduper_RepeatAndDowngradeSuppressed(t *testing.T) {
+	d := eew.NewDeduper()
+	d.Emit("q1", "emergency")
+
+	if emit, _ := d.Emit("q1", "emergency"); emit {
+		t.Error("a repeat at the same severity must be suppressed")
+	}
+	if emit, _ := d.Emit("q1", "critical"); emit {
+		t.Error("a downgrade must be suppressed")
+	}
+	if emit, _ := d.Emit("q1", "warning"); emit {
+		t.Error("a further downgrade must be suppressed")
+	}
+}
+
+// After an upgrade, the new level becomes the bar: another report at that level
+// is a repeat, and only a further rise gets through.
+func TestDeduper_UpgradeRaisesTheBar(t *testing.T) {
+	d := eew.NewDeduper()
+	d.Emit("q1", "warning")
+	d.Emit("q1", "critical")
+	if emit, _ := d.Emit("q1", "critical"); emit {
+		t.Error("repeat at the upgraded level must be suppressed")
+	}
+	if emit, up := d.Emit("q1", "emergency"); !emit || !up {
+		t.Error("a further rise must still get through")
+	}
+}

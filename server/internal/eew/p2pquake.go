@@ -138,13 +138,16 @@ func runFeed(ctx context.Context, name, url string, mapFn func([]byte) (Event, b
 				continue
 			}
 			// The dedup is SHARED across sources: whichever relay reports first
-			// wins, and the slower one is suppressed. Without this, dual-source
-			// would double-alarm on every quake.
-			if !d.FirstSeen(ev.EventID) {
+			// wins and the slower one is suppressed, so dual-source is redundancy
+			// rather than double-alarming. An upward revision of the intensity is
+			// the one thing that gets through a second time.
+			ok2, upgrade := d.Emit(ev.EventID, ev.Severity)
+			if !ok2 {
 				continue
 			}
+			ev.IsUpgrade = upgrade
 			slog.Info("eew event", "source", name, "event_id", ev.EventID,
-				"severity", ev.Severity, "serial", ev.Serial)
+				"severity", ev.Severity, "serial", ev.Serial, "upgrade", upgrade)
 			emit(ev)
 		}
 		conn.Close()

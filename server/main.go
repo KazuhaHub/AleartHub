@@ -281,26 +281,41 @@ func main() {
 	if eewSources := splitCSV(env("ALERTHUB_EEW", "")); len(eewSources) > 0 {
 		slog.Info("EEW sources enabled (complements official cell broadcast)", "sources", eewSources)
 		eew.Run(ctx, eewSources, func(ev eew.Event) {
+			// One alert id per earthquake, shared by both relays and by every
+			// revision of it — that is what lets §5.2 treat a revision as an
+			// update to the SAME warning instead of a competing second one.
+			id := "eew-" + ev.EventID
 			if ev.IsCancel {
-				_, _ = srv.CancelByID("eew-"+ev.EventID, "eew:wolfx", srv.DefaultOrgID)
+				_, _ = srv.CancelByID(id, "eew", srv.DefaultOrgID)
 				return
 			}
 			a := &alert.Alert{
 				SchemaVersion: alert.SchemaVersion,
-				ID:            "eew-" + ev.EventID,
+				ID:            id,
 				Type:          "alert",
 				Category:      "earthquake",
 				Severity:      ev.Severity,
 				Title:         ev.Title,
 				Body:          ev.Body,
 				Action:        ev.Action,
-				Source:        "eew:wolfx",
+				Source:        "eew",
 				IssuedAt:      time.Now().Unix(),
 				TTL:           120,
 				Nonce:         alert.NewNonce(),
 			}
+			if ev.IsUpgrade {
+				// The intensity was revised upward. Re-issue under the same id:
+				// clients that already saw it will re-present rather than extend,
+				// because the instruction to the person reading it has changed.
+				slog.Warn("EEW intensity revised UPWARD — re-alarming",
+					"event_id", ev.EventID, "severity", ev.Severity, "serial", ev.Serial)
+				if err := srv.RenewAlert(a, srv.DefaultOrgID); err != nil {
+					slog.Error("eew upgrade publish failed", "event_id", ev.EventID, "err", err)
+				}
+				return
+			}
 			if err := srv.PublishAlert(a, srv.DefaultOrgID); err != nil {
-				log.Printf("eew publish: %v", err)
+				slog.Error("eew publish failed", "event_id", ev.EventID, "err", err)
 			}
 		})
 	}
