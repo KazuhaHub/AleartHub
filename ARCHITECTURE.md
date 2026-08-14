@@ -179,7 +179,7 @@ migrations/  web-admin/  web-client/  clients/  deploy/{compose,helm,kustomize} 
 | SCIM 2.0 | 🔴 | 无 `internal/scim`；"离职即时下线"目前只能手工 |
 | 审计日志 | 🟡 | **已实现**：`audit_log` 表（两方言）+ **SHA-256 哈希链**（`hash = SHA256(prev_hash‖canonical(entry))`，改行/删行均可检出并定位到具体条目）+ append-only（无 update/delete 方法）+ `GET /api/audit`（perm `settings:manage`，按 org 过滤）+ `GET /api/audit/verify`（**仅超管**，链是全局的）。已记录 publish/cancel/登录成败/服务账号创建/组织创建。**SIEM 导出已实现**：`internal/siem` 按**持久化游标**至少一次外送（采集端故障时游标不前进，恢复后补齐；条目携带 `prev_hash`/`hash` 供采集端独立验链），`ALERTHUB_SIEM_URL` 配置。覆盖面已扩到 2FA 启停、passkey 增删、服务账号吊销、SSO 登录。**仍缺**：留存与归档策略、角色变更与设备事件、syslog 格式 |
 | 规模 / HA | 🔴 | 无 EMQX 可插拔 `Bus`、无 advisory-lock leader 选举；仍是内嵌 mochi 单进程 |
-| 外部看门狗（off-cluster）| 🔴 | §6 要求的 dead-man's-switch（healthchecks.io / Cloudflare Worker）完全缺失。服务端这半边的 fail-loud **已闭合**（心跳携带签名 `health`，查 `Store.Ping()` + 上次 broker 发布结果），但看门狗不能与被看者共命运——进程整体死亡仍无人能看见 |
+| 外部看门狗（off-cluster）| ✅ | `internal/watchdog`：**反向** dead-man's-switch（本机健康时才打点，沉默即告警，无需入站路径）。健康 → `<url>`；自检降级 → `<url>/fail`；进程死亡 → 静默 → 对端超时告警。健康判据与签名心跳同源，A/B 两层不会互相矛盾。**需配置 `ALERTHUB_WATCHDOG_URL`**（第三方 check），未配置启动 WARN |
 | 原生端 | 🔴 | Android / Tauri 桌面 / iOS 均未开始；Admin SPA 的 `/devices`、`/history`、`/sources` 仍是 "Coming soon" 占位 |
 
 两条刻意的设计取舍，记在这里免得被当成 bug：
@@ -202,7 +202,7 @@ migrations/  web-admin/  web-client/  clients/  deploy/{compose,helm,kustomize} 
 **下一步（按"欠得最贵的债先还"排）**：
 1. **设备面多租户**——给 `device` 加 `org_id` + provisioning，并把 `alerts/active` / `alerts/events` 拆成按 org 的主题。这是唯一还在打脸"多租户"承诺的结构性缺口，而且已上线设备越多、迁移越贵。
 2. **审计日志**（E0 遗留）——SOC2/ISO 评估的硬门槛；append-only + 哈希链的性质决定了它**不能事后补写历史**，越晚做覆盖面越残缺。
-3. **外部看门狗**——心跳讲真话这半步已完成（`health` 字段查 `Store.Ping()` + 上次 broker 发布结果）；仍需 off-cluster dead-man's-switch（SPEC-SAFETY P0-B）。看门狗不能与被看者共命运，因此 P0 现在**仍不算完成**。
+3. ~~**外部看门狗**~~——已完成（`internal/watchdog` 反向打点 + 心跳讲真话）。P0 现在是**代码完成**，剩下的是使用者在第三方建 check 并配置 `ALERTHUB_WATCHDOG_URL` 这一步部署动作。
 4. **每租户 SSO**（E1 收尾）+ **SCIM**（E2）——大客户 table-stakes，且两者都要改 §7a 的单 ACS/redirect 路由假设，宜一起做。
 
 ---
