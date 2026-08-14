@@ -35,6 +35,7 @@ import (
 	"github.com/kazuha/alerthub/server/internal/sso"
 	"github.com/kazuha/alerthub/server/internal/store"
 	"github.com/kazuha/alerthub/server/internal/twofa"
+	"github.com/kazuha/alerthub/server/internal/watchdog"
 )
 
 func env(k, def string) string {
@@ -42,6 +43,19 @@ func env(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseDuration is a forgiving env parser: a typo must not silently disable a
+// safety mechanism, so it falls back to the default and says so.
+func parseDuration(v string, def time.Duration) time.Duration {
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		if v != "" {
+			log.Printf("invalid duration %q, using %s", v, def)
+		}
+		return def
+	}
+	return d
 }
 
 func splitCSV(s string) []string {
@@ -239,6 +253,14 @@ func main() {
 		log.Printf("delivery pipeline: %d channel(s), durable outbox", len(senders))
 		go deliveryMgr.RunWorker(ctx)
 	}
+
+	// B-layer fail-loud: a dead-man switch held by a third party, so that "the
+	// whole house went dark" is noticed by someone other than the dead host.
+	wd := watchdog.New(watchdog.Config{
+		URL:      env("ALERTHUB_WATCHDOG_URL", ""),
+		Interval: parseDuration(env("ALERTHUB_WATCHDOG_INTERVAL", "60s"), time.Minute),
+	}, srv.SelfCheckHealthy)
+	go wd.Run(ctx)
 
 	// SIEM export: ship the audit trail off-host so it survives a compromise of
 	// this one (ARCHITECTURE §8). Disabled unless a collector URL is configured.

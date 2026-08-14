@@ -469,6 +469,14 @@ func (s *Server) selfCheck() (health string, reason string) {
 	return alert.HealthOK, ""
 }
 
+// SelfCheckHealthy is the watchdog's view of selfCheck: the same verdict that
+// feeds the signed heartbeat, so the A and B layers can never disagree about
+// whether this server considers itself healthy.
+func (s *Server) SelfCheckHealthy() (bool, string) {
+	health, reason := s.selfCheck()
+	return health == alert.HealthOK, reason
+}
+
 // notePublishResult records whether the most recent broker publish worked, so the
 // next heartbeat can report a broker that is failing under us.
 func (s *Server) notePublishResult(err error) {

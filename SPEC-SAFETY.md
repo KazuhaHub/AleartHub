@@ -113,7 +113,9 @@ canonical（Go 与 verify.js 必须逐字节一致）：`"hb2" \n seq \n issued_
 
 ### 3.3 B 层：外部看门狗（检测"整个家黑了"）
 
-> 状态：❌ **未实现**——healthchecks.io ping 与 Cloudflare Worker 都没有接。`/healthz`、`/readyz` 已就绪，接入点是备好的，但**没有任何外部实体在轮询**：“整个家黑了”这类故障目前无人能看见。（本节末句“服务端 ping 条件于内部健康”已落地：`RunHeartbeat` 现在查 `Store.Ping()` 与上次 broker 发布结果，见 §3.1；缺的纯粹是**外部**那一方。）
+> 状态：✅ **服务端侧已实现**（`internal/watchdog`，`ALERTHUB_WATCHDOG_URL` 开启）。机制是**反向**的：不要求外部服务能入站访问家里，而是本机**健康时才打点**，沉默即告警。健康 → GET `<url>`；自检降级 → GET `<url>/fail`（healthchecks.io 约定，让对端立即告警而非等宽限期）；进程/主机/上行死亡 → 完全无打点 → 对端超时告警。已用本地假采集端做过三段演练（健康打点 → 停 Postgres 转 `/fail` → 杀进程后彻底静默）。
+>
+> ⚠️ **剩下的是部署动作,不是代码**：必须由使用者在 healthchecks.io / Cloudflare Worker 上建一个 check 并把 URL 配进来。**未配置时服务启动会 WARN**——因为「以为有外部看门狗其实没有」比「知道自己没有」更危险。看门狗不能与被看者共命运，所以这个对端必须在别处。
 **反相逻辑**：家死了发不出消息 → 看门狗**在"该来的 ping 没来"时**触发（dead-man's switch）。
 - **主**：[healthchecks.io](https://healthchecks.io)（免费层 20 checks）。家服务端每 **60s** ping `hc-ping.com/<uuid>`；period=1min, grace=5min；Down 时 fan-out ntfy(自托管+ntfy.sh) + 邮件。服务端 ping **条件于内部健康**（broker/DB 不健康则主动打 `/fail`）。
 - **备**（不同厂商，去单点）：Cloudflare Worker cron 每 1min 拉取 `/healthz`，失败 POST ntfy.sh。

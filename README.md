@@ -67,6 +67,8 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | `ALERTHUB_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `ALERTHUB_SIEM_URL` | （空=禁用）| 审计日志外送采集端点（POST JSON）。至少一次投递，采集端需按条目 `id` 去重 |
 | `ALERTHUB_SIEM_TOKEN` | | 采集端 bearer token |
+| `ALERTHUB_WATCHDOG_URL` | （空=禁用）| **外部 dead-man switch**（healthchecks.io / CF Worker）。健康时打点，降级时打 `<url>/fail`，进程死亡则静默 → 由第三方超时告警 |
+| `ALERTHUB_WATCHDOG_INTERVAL` | `60s` | 打点间隔，需明显短于对端的宽限期 |
 
 ### 存储
 
