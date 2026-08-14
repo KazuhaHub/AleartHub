@@ -112,6 +112,36 @@ jobs:
       - name: conformance
         run: ./scripts/conformance.sh
 
+  # Supply-chain gate. This is not decorative: the first run of it found 9
+  # advisories reaching this code — 7 stdlib (fixed by pinning the toolchain in
+  # go.mod), golang.org/x/text (the NFC library on the signing path), and
+  # goxmldsig (the library that VALIDATES SAML assertion signatures).
+  vuln:
+    name: Vulnerability scan (Go + npm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./server/...
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web-admin/package-lock.json
+
+      - name: npm audit
+        working-directory: web-admin
+        # Fail on anything moderate or worse. Low-severity noise in dev-only
+        # tooling should not block a release, but anything reachable should.
+        run: npm audit --audit-level=moderate
+
   # The admin SPA (Ant Design 6) must typecheck AND build. `npm run build` runs
   # `tsc -b && vite build`; the tsc step works now that tsconfig.app.json carries
   # the @/* path mapping that mirrors vite's alias.

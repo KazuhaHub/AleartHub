@@ -202,6 +202,7 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | [docs/API.md](docs/API.md) | HTTP API 参考：全部路由、鉴权方式、权限矩阵、请求/响应 |
 | [docs/POSTGRES.md](docs/POSTGRES.md) | Enterprise 档：Postgres 接入、RLS 策略、最小权限角色、集成测试 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 最初的设计讨论存档 |
+| [SECURITY.md](SECURITY.md) | 漏洞披露流程、威胁模型边界、生产加固清单 |
 
 > 阅读顺序：线路协议看 SPEC.md，人身安全设计与**真实建设状态**看 SPEC-SAFETY.md §10/§11，企业架构与差距对照看 ARCHITECTURE.md §11，接口细节看 docs/API.md。各文档已与代码对齐；SPEC.md §0 明确标注了其中尚未落地的条款。
 
