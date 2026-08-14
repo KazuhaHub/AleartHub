@@ -15,6 +15,7 @@ import SettingsView from "@/views/SettingsView";
 import ComingSoon from "@/views/ComingSoon";
 import DevicesView from "@/views/DevicesView";
 import HistoryView from "@/views/HistoryView";
+import AuditView from "@/views/AuditView";
 
 function Guard() {
   const ready = useAuth((s) => s.ready);
@@ -48,6 +49,7 @@ export default function App() {
               <Route path="/devices" element={<DevicesView />} />
               <Route path="/history" element={<HistoryView />} />
               <Route path="/sources" element={<ComingSoon titleKey="nav.sources" />} />
+              <Route path="/audit" element={<AuditView />} />
               <Route path="/settings" element={<SettingsView />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>

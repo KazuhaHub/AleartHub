@@ -39,6 +39,7 @@ const NAV: NavSection[] = [
   ]},
   { section: "nav.section.config", items: [
     { to: "/sources", icon: <RadarChartOutlined />, key: "nav.sources", soon: true },
+    { to: "/audit", icon: <SafetyCertificateOutlined />, key: "nav.audit" },
     { to: "/settings", icon: <SettingOutlined />, key: "nav.settings" },
   ]},
 ];

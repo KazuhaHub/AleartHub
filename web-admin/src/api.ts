@@ -127,6 +127,15 @@ export type Device = { device_id: string; state: string; at: number; client: str
 
 export type OrgInfo = { id: number; slug: string; name: string };
 
+export type AuditEntry = {
+  id: number; org_id: number; at: number;
+  actor_type: "user" | "service_account" | "admin_token" | "system";
+  actor_id: number; actor_name: string; action: string;
+  target_type: string; target_id: string; detail: string; ip: string;
+  prev_hash: string; hash: string;
+};
+export type AuditChain = { ok: boolean; entries: number; bad_id?: number; reason?: string };
+
 export type DeadDelivery = {
   alert_id: string; channel: string; target: string; attempts: number; last_error: string; updated_at: number;
 };
@@ -139,5 +148,7 @@ export const api = {
   cancel: (id: string) => http.post("/api/cancel", { id }).then((x) => x.data),
   history: () => http.get<Alert[]>("/api/history").then((x) => x.data ?? []),
   devices: () => http.get<Device[]>("/api/devices").then((x) => x.data ?? []),
+  audit: (limit = 200) => http.get<AuditEntry[]>(`/api/audit?limit=${limit}`).then((x) => x.data ?? []),
+  auditVerify: () => http.get<AuditChain>("/api/audit/verify").then((x) => x.data),
   pubkey: () => http.get<{ pubkey: string; max_skew: number; ws_port: string }>("/pubkey").then((x) => x.data),
 };
