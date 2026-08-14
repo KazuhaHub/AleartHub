@@ -319,7 +319,7 @@
 | `GET /api/audit?limit=N` | perm `settings:manage` | 当前组织的审计条目，最新在前（默认 100，上限 500）。每条含 `actor_type`（`user`/`service_account`/`admin_token`/`system`）、`actor_name`、`action`、`target_id`、`ip`、`prev_hash`、`hash`。 |
 | `GET /api/audit/verify` | perm `settings:manage` + **仅超级管理员** | 重算整条哈希链。返回 `{ok, entries, bad_id?, reason?}`。链是**全局**的（跨租户，保护平台完整性），故校验是平台级操作；组织管理员只能读自己那份过滤视图。 |
 
-记录的动作：`alert.publish`、`alert.cancel`、`auth.login`、`auth.login_failed`、`service_account.create`、`org.create`。审计写入是 **best-effort**：写失败会大声记日志，但**不会**让原动作失败——因为审计表不可用而拒绝广播紧急警报，是更糟的结果。
+记录的动作：`alert.publish`、`alert.cancel`、`auth.login`、`auth.login_failed`、`auth.sso_login`、`2fa.enable`、`2fa.disable`、`passkey.add`、`passkey.delete`、`service_account.create`、`service_account.delete`、`org.create`。配置 `ALERTHUB_SIEM_URL` 后，条目还会按持久化游标至少一次外送到 SIEM（携带链哈希，供采集端独立验链）。审计写入是 **best-effort**：写失败会大声记日志，但**不会**让原动作失败——因为审计表不可用而拒绝广播紧急警报，是更糟的结果。
 | `GET /api/admin/service-accounts` | `perm:sa:manage` | 列出活动组织的服务账号。 |
 | `POST /api/admin/service-accounts` | `perm:sa:manage` | 创建服务账号，**明文 key 只返回一次**。 |
 | `POST /api/admin/service-accounts/delete` | `perm:sa:manage` | 请求体 `{"id": 1}`，成功 `204`。 |

@@ -123,6 +123,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metrics.Logins.WithLabelValues("oidc", "success").Inc()
+	s.audit(r, s.DefaultOrgID, AuditSSOLogin, "user", u.UPN, "oidc")
 	for _, n := range []string{"ah_oidc_state", "ah_oidc_nonce", "ah_oidc_pkce"} {
 		oidcCookie(w, n, "", -1)
 	}

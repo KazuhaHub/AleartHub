@@ -22,6 +22,15 @@ const (
 	AuditSACreate     = "service_account.create"
 	AuditSADelete     = "service_account.delete"
 	AuditOrgCreate    = "org.create"
+	// Credential-lifecycle events. "who turned off 2FA on that account" and "who
+	// added a passkey" are exactly the questions an incident review asks, and
+	// they are also the classic account-takeover footprint.
+	Audit2FAEnable    = "2fa.enable"
+	Audit2FADisable   = "2fa.disable"
+	AuditPasskeyAdd   = "passkey.add"
+	AuditPasskeyDel   = "passkey.delete"
+	AuditSSOLogin     = "auth.sso_login"
+	AuditSSOProvision = "auth.sso_provision"
 )
 
 // actorOf derives who is acting from the request. The three authentication

@@ -177,7 +177,7 @@ migrations/  web-admin/  web-client/  clients/  deploy/{compose,helm,kustomize} 
 | push / SMS / voice | 🔴 | outbox 只有 webhook 与 email 两个 sender；四通道 table-stakes 还差 push / SMS / voice 三个 |
 | 自定义角色 | 🔴 | 只有固定基础角色（owner/org_admin/admin/dispatcher/operator/viewer/user）；§3 的 `role` / `role_permission` 权限袋未建 |
 | SCIM 2.0 | 🔴 | 无 `internal/scim`；"离职即时下线"目前只能手工 |
-| 审计日志 | 🟡 | **已实现**：`audit_log` 表（两方言）+ **SHA-256 哈希链**（`hash = SHA256(prev_hash‖canonical(entry))`，改行/删行均可检出并定位到具体条目）+ append-only（无 update/delete 方法）+ `GET /api/audit`（perm `settings:manage`，按 org 过滤）+ `GET /api/audit/verify`（**仅超管**，链是全局的）。已记录 publish/cancel/登录成败/服务账号创建/组织创建。**仍缺**：SIEM 导出（syslog / JSON webhook）、留存与归档策略、覆盖面未及角色变更与设备事件 |
+| 审计日志 | 🟡 | **已实现**：`audit_log` 表（两方言）+ **SHA-256 哈希链**（`hash = SHA256(prev_hash‖canonical(entry))`，改行/删行均可检出并定位到具体条目）+ append-only（无 update/delete 方法）+ `GET /api/audit`（perm `settings:manage`，按 org 过滤）+ `GET /api/audit/verify`（**仅超管**，链是全局的）。已记录 publish/cancel/登录成败/服务账号创建/组织创建。**SIEM 导出已实现**：`internal/siem` 按**持久化游标**至少一次外送（采集端故障时游标不前进，恢复后补齐；条目携带 `prev_hash`/`hash` 供采集端独立验链），`ALERTHUB_SIEM_URL` 配置。覆盖面已扩到 2FA 启停、passkey 增删、服务账号吊销、SSO 登录。**仍缺**：留存与归档策略、角色变更与设备事件、syslog 格式 |
 | 规模 / HA | 🔴 | 无 EMQX 可插拔 `Bus`、无 advisory-lock leader 选举；仍是内嵌 mochi 单进程 |
 | 外部看门狗（off-cluster）| 🔴 | §6 要求的 dead-man's-switch（healthchecks.io / Cloudflare Worker）完全缺失。服务端这半边的 fail-loud **已闭合**（心跳携带签名 `health`，查 `Store.Ping()` + 上次 broker 发布结果），但看门狗不能与被看者共命运——进程整体死亡仍无人能看见 |
 | 原生端 | 🔴 | Android / Tauri 桌面 / iOS 均未开始；Admin SPA 的 `/devices`、`/history`、`/sources` 仍是 "Coming soon" 占位 |

@@ -219,6 +219,9 @@ func (s *Store) migrateSQLite() error {
 			prev_hash TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS audit_log_org ON audit_log(org_id, id)`,
+		`CREATE TABLE IF NOT EXISTS cursors (
+			name TEXT PRIMARY KEY, position INTEGER NOT NULL DEFAULT 0
+		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS delivery_jobs_uniq ON delivery_jobs(alert_id, channel, target)`,
 		`CREATE INDEX IF NOT EXISTS delivery_jobs_claim ON delivery_jobs(status, next_attempt_at)`,
 	}
@@ -303,6 +306,9 @@ func (s *Store) migratePostgres() error {
 			prev_hash TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS audit_log_org ON audit_log(org_id, id)`,
+		`CREATE TABLE IF NOT EXISTS cursors (
+			name TEXT PRIMARY KEY, position BIGINT NOT NULL DEFAULT 0
+		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS delivery_jobs_uniq ON delivery_jobs(alert_id, channel, target)`,
 		`CREATE INDEX IF NOT EXISTS delivery_jobs_claim ON delivery_jobs(status, next_attempt_at)`,
 	}

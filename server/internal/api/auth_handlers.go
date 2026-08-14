@@ -172,6 +172,7 @@ func (s *Server) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid code", http.StatusBadRequest)
 		return
 	}
+	s.audit(r, s.orgFor(r), Audit2FAEnable, "user", c.UPN, "TOTP enabled")
 	writeJSON(w, map[string]any{"recovery_codes": codes})
 }
 
@@ -195,6 +196,8 @@ func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid code", http.StatusBadRequest)
 		return
 	}
+	// Disabling a second factor weakens the account — always recorded.
+	s.audit(r, s.orgFor(r), Audit2FADisable, "user", c.UPN, "TOTP disabled")
 	w.WriteHeader(http.StatusNoContent)
 }
 

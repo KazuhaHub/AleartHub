@@ -41,6 +41,9 @@ func (s *Server) handlePasskeyRegFinish(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// A new credential that can log in as this user — the classic takeover
+	// footprint, so it is recorded with the name the user gave it.
+	s.audit(r, s.orgFor(r), AuditPasskeyAdd, "user", u.UPN, "passkey added: "+r.URL.Query().Get("name"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -113,5 +116,6 @@ func (s *Server) handlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
+	s.audit(r, s.orgFor(r), AuditPasskeyDel, "user", c.UPN, "passkey removed")
 	w.WriteHeader(http.StatusNoContent)
 }

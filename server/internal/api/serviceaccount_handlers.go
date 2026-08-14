@@ -82,6 +82,7 @@ func (s *Server) handleServiceAccountDelete(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
+	s.audit(r, s.orgFor(r), AuditSADelete, "service_account", strconv.FormatInt(req.ID, 10), "revoked")
 	w.WriteHeader(http.StatusNoContent)
 }
 

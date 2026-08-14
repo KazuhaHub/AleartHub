@@ -31,6 +31,7 @@ import (
 	"github.com/kazuha/alerthub/server/internal/ntfy"
 	"github.com/kazuha/alerthub/server/internal/obs"
 	"github.com/kazuha/alerthub/server/internal/passkey"
+	"github.com/kazuha/alerthub/server/internal/siem"
 	"github.com/kazuha/alerthub/server/internal/sso"
 	"github.com/kazuha/alerthub/server/internal/store"
 	"github.com/kazuha/alerthub/server/internal/twofa"
@@ -237,6 +238,16 @@ func main() {
 	if deliveryMgr.Enabled() {
 		log.Printf("delivery pipeline: %d channel(s), durable outbox", len(senders))
 		go deliveryMgr.RunWorker(ctx)
+	}
+
+	// SIEM export: ship the audit trail off-host so it survives a compromise of
+	// this one (ARCHITECTURE §8). Disabled unless a collector URL is configured.
+	siemExp := siem.New(st, siem.Config{
+		URL:   env("ALERTHUB_SIEM_URL", ""),
+		Token: env("ALERTHUB_SIEM_TOKEN", ""),
+	})
+	if siemExp.Enabled() {
+		go siemExp.Run(ctx)
 	}
 
 	if env("ALERTHUB_EEW", "") == "wolfx" {

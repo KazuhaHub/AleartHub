@@ -48,6 +48,7 @@ func (s *Server) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metrics.Logins.WithLabelValues("saml", "success").Inc()
+	s.audit(r, s.DefaultOrgID, AuditSSOLogin, "user", u.UPN, "saml")
 	code := putSSOCode(access, refresh, toDTO(u))
 	http.Redirect(w, r, "/admin/sso?code="+code, http.StatusFound)
 }
