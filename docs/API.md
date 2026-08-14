@@ -316,6 +316,7 @@
 
 | 方法 路径 | 鉴权 | 说明 |
 |---|---|---|
+| `GET /api/sources` | perm `alert:read` | 只读列出已配置的入向/出向通道（panel、CAP、EEW、ntfy、投递、看门狗、SIEM），只报「是否启用」与控制它的环境变量名，**绝不返回任何密钥或 URL**。来源配置只走环境变量——让 feed 在控制台可编辑等于再开一条注入警报的路径。 |
 | `GET /api/audit?limit=N` | perm `settings:manage` | 当前组织的审计条目，最新在前（默认 100，上限 500）。每条含 `actor_type`（`user`/`service_account`/`admin_token`/`system`）、`actor_name`、`action`、`target_id`、`ip`、`prev_hash`、`hash`。 |
 | `GET /api/audit/verify` | perm `settings:manage` + **仅超级管理员** | 重算整条哈希链。返回 `{ok, entries, bad_id?, reason?}`。链是**全局**的（跨租户，保护平台完整性），故校验是平台级操作；组织管理员只能读自己那份过滤视图。 |
 

@@ -134,6 +134,11 @@ export type AuditEntry = {
   target_type: string; target_id: string; detail: string; ip: string;
   prev_hash: string; hash: string;
 };
+export type SourceInfo = {
+  key: string; kind: "ingress" | "egress"; enabled: boolean;
+  detail: string; config_var: string;
+};
+
 export type AuditChain = { ok: boolean; entries: number; bad_id?: number; reason?: string };
 
 export type DeadDelivery = {
@@ -148,6 +153,7 @@ export const api = {
   cancel: (id: string) => http.post("/api/cancel", { id }).then((x) => x.data),
   history: () => http.get<Alert[]>("/api/history").then((x) => x.data ?? []),
   devices: () => http.get<Device[]>("/api/devices").then((x) => x.data ?? []),
+  sources: () => http.get<{ sources: SourceInfo[] }>("/api/sources").then((x) => x.data?.sources ?? []),
   audit: (limit = 200) => http.get<AuditEntry[]>(`/api/audit?limit=${limit}`).then((x) => x.data ?? []),
   auditVerify: () => http.get<AuditChain>("/api/audit/verify").then((x) => x.data),
   pubkey: () => http.get<{ pubkey: string; max_skew: number; ws_port: string }>("/pubkey").then((x) => x.data),

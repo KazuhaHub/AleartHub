@@ -24,7 +24,7 @@ const DRAWER_W = 256;
 // Mirrors the previous MUI `theme.breakpoints.down("md")` (md = 900px).
 const MOBILE_QUERY = "(max-width: 899.95px)";
 
-type NavItem = { to: string; icon: React.ReactNode; key: string; soon?: boolean };
+type NavItem = { to: string; icon: React.ReactNode; key: string };
 type NavSection = { section: string; items: NavItem[] };
 
 // Paths are relative to the router basename ("/admin").
@@ -38,7 +38,7 @@ const NAV: NavSection[] = [
     { to: "/history", icon: <HistoryOutlined />, key: "nav.history" },
   ]},
   { section: "nav.section.config", items: [
-    { to: "/sources", icon: <RadarChartOutlined />, key: "nav.sources", soon: true },
+    { to: "/sources", icon: <RadarChartOutlined />, key: "nav.sources" },
     { to: "/audit", icon: <SafetyCertificateOutlined />, key: "nav.audit" },
     { to: "/settings", icon: <SettingOutlined />, key: "nav.settings" },
   ]},
@@ -125,9 +125,7 @@ export default function AdminLayout() {
       label: (
         <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{t(it.key)}</span>
-          {it.soon && (
-            <span style={{ fontSize: 12, opacity: 0.6, flex: "0 0 auto" }}>{t("common.comingSoon")}</span>
-          )}
+          
         </span>
       ),
     })),

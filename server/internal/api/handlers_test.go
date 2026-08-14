@@ -688,3 +688,46 @@ func TestAuditVerify_SuperAdminOnly(t *testing.T) {
 		t.Fatalf("org admin verifying the global chain = %d, want 403", w.Code)
 	}
 }
+
+// --- sources ----------------------------------------------------------------
+
+// TestSources_ReportsWithoutLeakingSecrets: the point of this endpoint is to say
+// WHETHER a channel is configured, never what it is configured with.
+func TestSources_ReportsWithoutLeakingSecrets(t *testing.T) {
+	ts := newTestServer(t)
+	ts.srv.EEWEnabled = true
+	ts.srv.WatchdogConfigured = true
+
+	w := ts.req(t, http.MethodGet, "/api/sources", nil, adminHdr())
+	if w.Code != http.StatusOK {
+		t.Fatalf("sources = %d", w.Code)
+	}
+	var got SourcesConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Sources) < 5 {
+		t.Fatalf("expected the full channel list, got %d", len(got.Sources))
+	}
+	byKey := map[string]SourceInfo{}
+	for _, s := range got.Sources {
+		byKey[s.Key] = s
+	}
+	if !byKey["eew_wolfx"].Enabled || !byKey["watchdog"].Enabled {
+		t.Error("configured channels must report enabled")
+	}
+	if byKey["siem"].Enabled {
+		t.Error("an unconfigured channel must report disabled")
+	}
+	// The admin token is a secret and must never appear in a response body.
+	if strings.Contains(w.Body.String(), testAdminToken) {
+		t.Fatal("SECURITY: a credential leaked into /api/sources")
+	}
+}
+
+func TestSources_RequiresAuth(t *testing.T) {
+	ts := newTestServer(t)
+	if w := ts.req(t, http.MethodGet, "/api/sources", nil, nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth sources = %d, want 401", w.Code)
+	}
+}

@@ -60,6 +60,12 @@ type Server struct {
 	OIDC     *sso.OIDC         // OIDC single sign-on (admin auth)
 	SAML     *sso.SAML         // SAML single sign-on (admin auth)
 
+	// Feature flags reported by /api/sources. They record whether a channel was
+	// configured, never the credential behind it.
+	EEWEnabled         bool
+	WatchdogConfigured bool
+	SIEMConfigured     bool
+
 	OIDCDefaultRole string // role for JIT-provisioned SSO users
 	DefaultOrgID    int64  // single-tenant active org (M1; per-request active org is M2)
 
@@ -121,6 +127,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/delivery/stats", s.requirePerm(auth.PermAlertRead, s.handleDeliveryStats))
 	mux.HandleFunc("/api/orgs", s.requireRole(auth.RoleUser, s.handleOrgs))
 	// Audit trail (RBAC: settings:manage; verifying the global chain is super-only).
+	// Read-only view of configured ingress/egress channels (no secrets).
+	mux.HandleFunc("/api/sources", s.requirePerm(auth.PermAlertRead, s.handleSources))
 	mux.HandleFunc("/api/audit", s.requirePerm(auditPerm, s.handleAudit))
 	mux.HandleFunc("/api/audit/verify", s.requirePerm(auditPerm, s.handleAuditVerify))
 	mux.HandleFunc("/pubkey", s.handlePubkey)

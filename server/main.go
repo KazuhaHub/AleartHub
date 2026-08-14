@@ -233,7 +233,10 @@ func main() {
 		WSPort: wsPort, ClientUser: cliUser, ClientPass: cliPass,
 		Ntfy: ntfyPub, Delivery: deliveryMgr, Auth: authSvc, Passkey: passkeySvc, TwoFA: twofaSvc,
 		OIDC: oidcSvc, SAML: samlSvc, OIDCDefaultRole: env("ALERTHUB_OIDC_DEFAULT_ROLE", "admin"),
-		DefaultOrgID: defaultOrg,
+		EEWEnabled:         env("ALERTHUB_EEW", "") == "wolfx",
+		WatchdogConfigured: env("ALERTHUB_WATCHDOG_URL", "") != "",
+		SIEMConfigured:     env("ALERTHUB_SIEM_URL", "") != "",
+		DefaultOrgID:       defaultOrg,
 	}
 	if ntfyPub.Enabled() {
 		log.Printf("ntfy backup channel: self=%q public=%q", ntfyURL, ntfyPublic)

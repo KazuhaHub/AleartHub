@@ -12,10 +12,10 @@ import SSOCallback from "@/views/SSOCallback";
 import DashboardView from "@/views/DashboardView";
 import PublishView from "@/views/PublishView";
 import SettingsView from "@/views/SettingsView";
-import ComingSoon from "@/views/ComingSoon";
 import DevicesView from "@/views/DevicesView";
 import HistoryView from "@/views/HistoryView";
 import AuditView from "@/views/AuditView";
+import SourcesView from "@/views/SourcesView";
 
 function Guard() {
   const ready = useAuth((s) => s.ready);
@@ -48,7 +48,7 @@ export default function App() {
               <Route path="/publish" element={<PublishView />} />
               <Route path="/devices" element={<DevicesView />} />
               <Route path="/history" element={<HistoryView />} />
-              <Route path="/sources" element={<ComingSoon titleKey="nav.sources" />} />
+              <Route path="/sources" element={<SourcesView />} />
               <Route path="/audit" element={<AuditView />} />
               <Route path="/settings" element={<SettingsView />} />
               <Route path="*" element={<Navigate to="/" replace />} />

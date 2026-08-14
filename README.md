@@ -191,7 +191,7 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | 持久化送达：事务性 outbox、至少一次、按 (alert, channel, target) 幂等、指数退避、租约式崩溃恢复、死信；Postgres 用 `FOR UPDATE SKIP LOCKED` | ✅ |
 | 可观测性：Prometheus 指标 + `/healthz` + `/readyz` | ✅ |
 | HTTP：gzip 压缩（实测 ~3.1×）+ 非对称缓存策略（`/admin/assets/*` immutable；告警客户端钉死 `no-cache`；JSON 全部 `no-store`） | ✅ |
-| 管理控制台：React 19 + Ant Design 6 + Vite 8，M3 动态取色（6 套预设 / 明暗自动），中英 i18n，go:embed 内嵌 | ✅ 仪表盘 / 发布 / 设备 / 历史 / **审计** / 设置均已实装；仅 `/sources` 仍是占位（它需要一个尚不存在的来源配置接口） |
+| 管理控制台：React 19 + Ant Design 6 + Vite 8，M3 动态取色（6 套预设 / 明暗自动），中英 i18n，go:embed 内嵌 | ✅ **全部视图已实装**：仪表盘 / 发布 / 设备 / 历史 / 来源 / 审计 / 设置，无占位页 |
 | CI：4 个 job（SQLite 门禁 / Postgres RLS / Node 22 签名一致性 / SPA typecheck + build） | ✅ |
 | **设备与广播面仍是单租户**：`/api/devices` 返回全局在线名册，`alerts/active`、`alerts/events` 是全局 topic，设备没有 `org_id`（设备下发未建）。**即：控制面多租户，设备面单租户** | ❌ |
 | **审计日志**：`audit_log` 哈希链（篡改可检出）、append-only、`GET /api/audit` + `/api/audit/verify` | ✅ 已实现（仍缺 SIEM 导出与留存策略）|
