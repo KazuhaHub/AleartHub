@@ -127,7 +127,7 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `ALERTHUB_EEW` | （空=关闭） | 设为 `wolfx` 启用日本 EEW（Wolfx WebSocket，按 EventID 去重） |
+| `ALERTHUB_EEW` | （空=关闭） | 日本 EEW 源，**逗号分隔**：`wolfx`、`p2pquake`。填两个即双源冗余（共享去重，同一次地震只发一条）。只填一个会在启动时 WARN——§6.1 要求两个独立中继 |
 
 ### OIDC 单点登录
 

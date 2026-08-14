@@ -7,11 +7,9 @@ package eew
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 const WolfxURL = "wss://ws-api.wolfx.jp/jma_eew"
@@ -97,43 +95,41 @@ func oneline(s string) string {
 	return strings.TrimSpace(strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(s))
 }
 
-// RunWolfx maintains the Wolfx WS connection (reconnect+backoff) and calls emit
-// for each new event (deduped once per EventID; cancels always emitted).
-func RunWolfx(ctx context.Context, emit func(Event)) {
-	seen := map[string]bool{}
-	backoff := time.Second
-	for ctx.Err() == nil {
-		conn, _, err := websocket.DefaultDialer.DialContext(ctx, WolfxURL, nil)
-		if err != nil {
-			log.Printf("eew: Wolfx dial: %v", err)
-			sleepBackoff(ctx, &backoff)
-			continue
+// RunWolfx maintains the Wolfx WS connection (reconnect+backoff) and emits
+// deduped events, sharing the Deduper with any other source.
+func RunWolfx(ctx context.Context, d *Deduper, emit func(Event)) {
+	runFeed(ctx, "wolfx", WolfxURL, MapWolfx, d, emit)
+}
+
+// Source names accepted by Run.
+const (
+	SourceWolfx    = "wolfx"
+	SourceP2PQuake = "p2pquake"
+)
+
+// Run starts every named source against ONE shared deduper, which is what makes
+// dual-source redundancy rather than double-alarming: either relay can be down
+// or slow and the other still delivers, but a quake both of them report still
+// produces a single alert (SPEC-SAFETY §6.1).
+func Run(ctx context.Context, sources []string, emit func(Event)) {
+	d := NewDeduper()
+	started := 0
+	for _, name := range sources {
+		switch name {
+		case SourceWolfx:
+			go RunWolfx(ctx, d, emit)
+			started++
+		case SourceP2PQuake:
+			go RunP2PQuake(ctx, d, emit)
+			started++
+		default:
+			slog.Error("unknown EEW source, ignoring", "source", name)
 		}
-		log.Printf("eew: connected to Wolfx (%s)", WolfxURL)
-		backoff = time.Second
-		for ctx.Err() == nil {
-			_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
-			_, data, err := conn.ReadMessage()
-			if err != nil {
-				break
-			}
-			ev, ok := MapWolfx(data)
-			if !ok {
-				continue
-			}
-			if ev.IsCancel {
-				delete(seen, ev.EventID)
-				emit(ev)
-				continue
-			}
-			if seen[ev.EventID] {
-				continue // once per event (MVP; escalation/renewal is a later refinement)
-			}
-			seen[ev.EventID] = true
-			emit(ev)
-		}
-		conn.Close()
-		sleepBackoff(ctx, &backoff)
+	}
+	if started == 1 {
+		// Say it out loud: one relay is a single point of failure on the path that
+		// matters most, and §6.1 asks for two.
+		slog.Warn("only ONE EEW source configured — §6.1 asks for two independent relays")
 	}
 }
 

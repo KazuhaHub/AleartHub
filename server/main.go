@@ -275,9 +275,12 @@ func main() {
 		go siemExp.Run(ctx)
 	}
 
-	if env("ALERTHUB_EEW", "") == "wolfx" {
-		log.Printf("EEW source: Wolfx enabled (complements official cell broadcast)")
-		go eew.RunWolfx(ctx, func(ev eew.Event) {
+	// ALERTHUB_EEW is a CSV of relays, e.g. "wolfx,p2pquake". Two independent
+	// sources is what SPEC-SAFETY §6.1 asks for; they share one deduper so a
+	// quake both report still fires a single alert.
+	if eewSources := splitCSV(env("ALERTHUB_EEW", "")); len(eewSources) > 0 {
+		slog.Info("EEW sources enabled (complements official cell broadcast)", "sources", eewSources)
+		eew.Run(ctx, eewSources, func(ev eew.Event) {
 			if ev.IsCancel {
 				_, _ = srv.CancelByID("eew-"+ev.EventID, "eew:wolfx", srv.DefaultOrgID)
 				return
