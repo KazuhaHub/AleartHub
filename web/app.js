@@ -139,6 +139,7 @@ function scheduleExpiry(a) {
 // ---------- render + cancel ----------
 function renderAlert(a) {
   scheduleExpiry(a);
+  notify(a); // reaches the user when this tab is not in front
   if (a.severity === "critical" || a.severity === "emergency") pushFullscreen(a);
   else showToast(a);
 }
@@ -362,6 +363,34 @@ function connect() {
   client.on("message", onMessage);
 }
 
+// requestNotificationPermission asks once, at arm time (SPEC §9). A system
+// notification is a weaker channel than the fullscreen takeover, but it is the
+// only one that reaches the user when this tab is not in front — which is most
+// of the time. Failure is non-fatal: the in-page presentation still works.
+function requestNotificationPermission() {
+  try {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().then((p) => {
+        console.info("[alerthub] notification permission:", p);
+      }).catch(() => {});
+    }
+  } catch (_) { /* older engines: ignore */ }
+}
+
+// notify raises a system notification for an alert, when permitted. It
+// complements the overlay rather than replacing it.
+function notify(a) {
+  try {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    new Notification(a.title || "AlertHub", {
+      body: [a.body, a.action].filter(Boolean).join(" · "),
+      tag: a.id,          // one notification per alert, replaced on renewal
+      renotify: false,    // a renewal must not buzz again (SPEC §5.2)
+    });
+  } catch (_) {}
+}
+
 // ---------- boot ----------
 async function boot() {
   deviceId = getDeviceId();
@@ -372,7 +401,13 @@ async function boot() {
     $("#conn-text").textContent = "无法获取配置";
     return;
   }
-  pubRaw = b64urlToBytes(cfg.pubkey);
+  // SPEC §8: accept an ORDERED list of keys so a rotation does not need downtime.
+  // Falls back to the single "pubkey" field for an older server.
+  const keyList = Array.isArray(cfg.pubkeys) && cfg.pubkeys.length ? cfg.pubkeys : [cfg.pubkey];
+  pubRaw = keyList.filter(Boolean).map(b64urlToBytes);
+  if (pubRaw.length > 1) {
+    console.info(`[alerthub] accepting ${pubRaw.length} signing keys (rotation overlap)`);
+  }
   maxSkew = cfg.max_skew || 120;
   connect();
 }
@@ -387,6 +422,9 @@ $("#ackbtn").onclick = () => {
 
 $("#armbtn").onclick = () => {
   unlockAudio();
+  // SPEC §9: a user gesture is the ONLY moment a browser will grant these, and
+  // this button is the only gesture we are guaranteed. Asking later means never.
+  requestNotificationPermission();
   $("#arm").remove();
   $("#statusbar").hidden = false;
   $("#idle").hidden = false;

@@ -17,8 +17,8 @@
 |---|---|---|
 | §5.2 | `emergency` 由服务端**续期**（同 `id` + 新 `issued_at`/`ttl` 重发）| ✅ 已实现（服务端 `RenewAlert` + 客户端续期/升级分流）。|
 | §5.3 | 面板订阅 `alerts/+/ack/#` 构建「谁已确认」名册 | ✅ 已实现（服务端订阅 + `alert_acks` 持久化 + `GET /api/alerts/acks` 返回已确认/在线未确认）。|
-| §8 | 客户端接受**有序公钥列表**以支持轮换 | ❌ 未实现。客户端只持单一公钥；轮换需停机换钥。 |
-| §9 | Arm 手势一并申请 `Notification.requestPermission()` | ❌ 未实现。只解锁了音频。 |
+| §8 | 客户端接受**有序公钥列表**以支持轮换 | ✅ 已实现（`/pubkey` 返回 `pubkeys` 有序列表，客户端任一通过即接受；`ALERTHUB_PUBKEYS_EXTRA` 配置重叠期旧钥）。|
+| §9 | Arm 手势一并申请 `Notification.requestPermission()` | ✅ 已实现（arm 时申请，并在呈现告警时发系统通知；续期用同 `tag` + `renotify:false` 避免重复打扰）。|
 
 **但仍有诚实的边界，别 over-claim：**
 - **没有原生客户端**（Android / 桌面 / iOS 均未开始，见 [SPEC-SAFETY.md §10](SPEC-SAFETY.md) 的 P5/P6/P7）→ 无法保证唤醒睡眠或锁屏的设备，也无法盖在其它应用之上。浏览器客户端只在「人在机器前、页面开着」时有效。
@@ -247,7 +247,9 @@ pattern write status/%u
 - **公钥分发**：
   - **MVP**：客户端启动 `GET /pubkey` 拉取（loopback 可信；威胁模型针对的是「内网设备经 MQTT 注入」，它们既不能签也无法 MITM 本机 HTTP）。
   - **生产（客户端在别的设备/跨网）**：**构建期把公钥内嵌进客户端**（如 Vite `VITE_ALERTHUB_PUBKEY`），这是真正的信任锚——否则 MITM 可同时换公钥并用配对私钥签名。
-- **轮换**：客户端接受一个有序公钥列表（任一通过即可），新键重叠期发布，下个客户端版本再去掉旧键。需快速吊销时给信封加 `kid` 并纳入规范化（→ schema v2）。
+- **轮换（已实现）**：`GET /pubkey` 返回 `pubkeys` —— **有序**接受列表，当前签名密钥在首位；客户端任一通过即接受。旧钥经 `ALERTHUB_PUBKEYS_EXTRA`（CSV）配置，**只被接受、永不用于签名**。
+  操作步骤：① 把**当前**公钥加入 `ALERTHUB_PUBKEYS_EXTRA` → ② 用新私钥替换 `keys/alerthub_ed25519.key` 并重启 → ③ 重叠期内新旧签名都验得过 → ④ 确认所有客户端已刷新后，从 `_EXTRA` 移除旧钥。
+  conformance 守护两条:重叠期两钥都接受、列表内无正确密钥则必须拒（否则「接受列表」等于「接受一切」）。需**快速吊销**时仍需给信封加 `kid` 并纳入规范化（→ schema v2，未做）。
 
 ---
 

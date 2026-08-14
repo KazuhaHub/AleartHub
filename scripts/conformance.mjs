@@ -60,6 +60,18 @@ if (fixJSON) {
   gate.escalation = e.ok === true && e.escalation === true;
 }
 
+// --- §8 key rotation ---------------------------------------------------------
+// A rotation is only downtime-free if a client accepts BOTH keys during the
+// overlap. Verify that a signature made under the real key still passes when the
+// key list also contains an unrelated key, and that a list WITHOUT the real key
+// rejects it (otherwise "accept a list" would just mean "accept anything").
+const rot = { overlapAccepts: null, wrongListRejects: null };
+{
+  const decoy = new Uint8Array(32); // not a real key
+  rot.overlapAccepts   = (await verifyAlert(env, [decoy, pubRaw])) === true;
+  rot.wrongListRejects = (await verifyAlert(env, [decoy])) === false;
+}
+
 console.log("envelope id :", env.id);
 console.log("canonical   :", JSON.stringify(new TextDecoder().decode(canonicalBytes(env))));
 console.log("VERIFY (Go-signed -> web/verify.js):", ok ? "✅ PASS" : "❌ FAIL");
@@ -79,6 +91,10 @@ if (fixJSON) {
   console.log("GATE §5.2                          : ⚠️  SKIPPED (no ALERTHUB_GATE_JSON)");
 }
 
+console.log("ROTATION overlap accepts both      :", rot.overlapAccepts ? "✅ PASS" : "❌ FAIL");
+console.log("ROTATION list without key rejects  :", rot.wrongListRejects ? "✅ PASS" : "❌ FAIL");
+
 const gateOK = !fixJSON || (gate.first && gate.replay && gate.stale && gate.renewal && gate.escalation);
-const allPass = ok && tamperRejected && (!hbJSON || (hbOK && hbTamperRejected)) && gateOK;
+const allPass = ok && tamperRejected && (!hbJSON || (hbOK && hbTamperRejected)) && gateOK &&
+  rot.overlapAccepts && rot.wrongListRejects;
 process.exit(allPass ? 0 : 1);

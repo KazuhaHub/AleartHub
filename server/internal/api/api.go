@@ -38,12 +38,16 @@ const (
 )
 
 type Server struct {
-	Broker     *broker.Broker
-	Store      *store.Store
-	Priv       ed25519.PrivateKey
-	PubB64url  string // base64url raw 32-byte public key, served at /pubkey
-	AdminToken string
-	WebDir     string
+	Broker    *broker.Broker
+	Store     *store.Store
+	Priv      ed25519.PrivateKey
+	PubB64url string // base64url raw 32-byte public key currently used for SIGNING
+	// PubB64urlExtra are additional keys clients should still ACCEPT (SPEC §8
+	// rotation). Signing always uses PubB64url; these exist so a key can be
+	// replaced without downtime — clients accept old and new during the overlap.
+	PubB64urlExtra []string
+	AdminToken     string
+	WebDir         string
 
 	// Browser-client bootstrap info served at /pubkey (SPEC §7/§8). The client
 	// MQTT password is not a real secret in a browser — the trust anchor is the
@@ -425,8 +429,11 @@ func (s *Server) handleDeliveryStats(w http.ResponseWriter, r *http.Request) {
 // handlePubkey returns the trust anchor + browser-client bootstrap info (SPEC §7).
 // Public on purpose for the local MVP; production embeds the pubkey at build time.
 func (s *Server) handlePubkey(w http.ResponseWriter, r *http.Request) {
+	// "pubkey" stays for compatibility with anything reading the old shape;
+	// "pubkeys" is the ordered accept-list, current key first (SPEC §8).
 	writeJSON(w, map[string]any{
 		"pubkey":         s.PubB64url,
+		"pubkeys":        append([]string{s.PubB64url}, s.PubB64urlExtra...),
 		"schema_version": alert.SchemaVersion,
 		"max_skew":       MaxSkew,
 		"ws_port":        s.WSPort,

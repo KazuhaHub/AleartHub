@@ -230,7 +230,9 @@ func main() {
 	srv := &api.Server{
 		Broker: b, Store: st, Priv: priv, PubB64url: pubB64,
 		AdminToken: adminToken, WebDir: webDir,
-		WSPort: wsPort, ClientUser: cliUser, ClientPass: cliPass,
+		// Rotation overlap: keys listed here are accepted but never used to sign.
+		PubB64urlExtra: splitCSV(env("ALERTHUB_PUBKEYS_EXTRA", "")),
+		WSPort:         wsPort, ClientUser: cliUser, ClientPass: cliPass,
 		Ntfy: ntfyPub, Delivery: deliveryMgr, Auth: authSvc, Passkey: passkeySvc, TwoFA: twofaSvc,
 		OIDC: oidcSvc, SAML: samlSvc, OIDCDefaultRole: env("ALERTHUB_OIDC_DEFAULT_ROLE", "admin"),
 		EEWEnabled:         env("ALERTHUB_EEW", "") == "wolfx",

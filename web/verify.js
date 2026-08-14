@@ -41,14 +41,28 @@ export function canonicalBytes(a) {
 
 // --- Ed25519 verify: WebCrypto first (Safari 17 / FF 129 / Chrome 137+),
 //     @noble/ed25519 fallback for older engines. SPEC §3.4. ----------------
-let _key = null;
+// SPEC §8 rotation: the client accepts an ORDERED LIST of public keys and takes
+// a signature that any of them validates. That is what lets a key be replaced
+// without downtime — publish under the new key while clients still accept the
+// old one, then drop the old one in a later client release. Verifying against a
+// single key means every rotation is an outage.
 let _webcryptoBroken = false;
+const _keyCache = new Map(); // raw-key string -> imported CryptoKey
+
+function keyId(raw) {
+  let s = "";
+  for (const b of raw) s += String.fromCharCode(b);
+  return s;
+}
 
 async function webcryptoVerify(msg, sig, pubRaw) {
-  if (!_key) {
-    _key = await crypto.subtle.importKey("raw", pubRaw, { name: "Ed25519" }, false, ["verify"]);
+  const id = keyId(pubRaw);
+  let k = _keyCache.get(id);
+  if (!k) {
+    k = await crypto.subtle.importKey("raw", pubRaw, { name: "Ed25519" }, false, ["verify"]);
+    _keyCache.set(id, k);
   }
-  return crypto.subtle.verify({ name: "Ed25519" }, _key, sig, msg);
+  return crypto.subtle.verify({ name: "Ed25519" }, k, sig, msg);
 }
 
 let _noble = null;
@@ -59,19 +73,37 @@ async function nobleVerify(msg, sig, pubRaw) {
   return _noble.verifyAsync(sig, msg, pubRaw);
 }
 
-export async function verifyAlert(a, pubRaw) {
+// asKeyList accepts either one key or a list, so every caller can pass whatever
+// it has without each of them re-implementing the normalisation.
+function asKeyList(pub) {
+  if (!pub) return [];
+  return Array.isArray(pub) ? pub.filter(Boolean) : [pub];
+}
+
+// verifyBytes tries each accepted key in order and returns true on the first
+// that validates. Order matters only for speed: the current key should be first.
+async function verifyBytes(msg, sig, pub) {
+  for (const raw of asKeyList(pub)) {
+    if (!_webcryptoBroken && globalThis.crypto?.subtle) {
+      try {
+        if (await webcryptoVerify(msg, sig, raw)) return true;
+        continue;
+      } catch (_) {
+        _webcryptoBroken = true; // engine lacks Ed25519 — use noble from here on
+      }
+    }
+    try {
+      if (await nobleVerify(msg, sig, raw)) return true;
+    } catch (_) { /* try the next key */ }
+  }
+  return false;
+}
+
+export async function verifyAlert(a, pub) {
   if (!a || typeof a.sig !== "string") return false;
-  const msg = canonicalBytes(a);
   const sig = b64urlToBytes(a.sig);
   if (sig.length !== 64) return false;
-  if (!_webcryptoBroken && globalThis.crypto?.subtle) {
-    try {
-      return await webcryptoVerify(msg, sig, pubRaw);
-    } catch (_) {
-      _webcryptoBroken = true; // engine lacks Ed25519 — use noble from now on
-    }
-  }
-  return nobleVerify(msg, sig, pubRaw);
+  return verifyBytes(canonicalBytes(a), sig, pub);
 }
 
 // --- Heartbeat verify (SPEC-SAFETY §3.1) -----------------------------------
@@ -91,19 +123,14 @@ export function canonicalHeartbeatBytes(h) {
   return enc.encode(parts.join("\n"));
 }
 
-export async function verifyHeartbeat(h, pubRaw) {
+export async function verifyHeartbeat(h, pub) {
   if (!h || typeof h.sig !== "string") return false;
-  const msg = canonicalHeartbeatBytes(h);
   const sig = b64urlToBytes(h.sig);
   if (sig.length !== 64) return false;
-  if (!_webcryptoBroken && globalThis.crypto?.subtle) {
-    try {
-      return await webcryptoVerify(msg, sig, pubRaw);
-    } catch (_) {
-      _webcryptoBroken = true;
-    }
-  }
-  return nobleVerify(msg, sig, pubRaw);
+  // Same rotation rule as alerts: a beat signed with the previous key must still
+  // verify during the overlap, or a rotation would make every client believe the
+  // server had died.
+  return verifyBytes(canonicalHeartbeatBytes(h), sig, pub);
 }
 
 // --- Accept gate: signature -> skew -> dedup -> TTL (SPEC §4) ---------------
