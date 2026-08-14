@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/kazuha/alerthub/server/internal/delivery"
 	"github.com/kazuha/alerthub/server/internal/metrics"
 	"github.com/kazuha/alerthub/server/internal/ntfy"
+	"github.com/kazuha/alerthub/server/internal/obs"
 	"github.com/kazuha/alerthub/server/internal/passkey"
 	"github.com/kazuha/alerthub/server/internal/sso"
 	"github.com/kazuha/alerthub/server/internal/store"
@@ -262,11 +264,17 @@ func (s *Server) PublishAlert(a *alert.Alert, orgID int64) error {
 	if err := s.inOrg(context.Background(), orgID, func(st *store.Store) error {
 		return st.Save(a, orgID)
 	}); err != nil {
-		log.Printf("store save: %v", err)
+		// The alert IS already on the wire at this point — persistence failing
+		// degrades history/delivery, it does not lose the broadcast.
+		slog.Error("alert persist failed", "alert_id", a.ID, "org_id", orgID, "err", err)
 	}
 	if s.Delivery.Enabled() {
 		s.Delivery.Enqueue(a, orgID, string(payload)) // durable webhook/email outbox
 	}
+	// Publishing an alert is the single most consequential action in the system;
+	// it must always leave a record naming who/what fired it.
+	slog.Info("alert published", "alert_id", a.ID, "severity", a.Severity,
+		"category", a.Category, "source", a.Source, "org_id", orgID)
 	metrics.AlertsPublished.WithLabelValues(a.Severity, a.Category, a.Source).Inc()
 	return nil
 }
@@ -346,8 +354,9 @@ func (s *Server) CancelByID(originalID, source string, orgID int64) (*alert.Aler
 	if err := s.inOrg(context.Background(), orgID, func(st *store.Store) error {
 		return st.Save(c, orgID)
 	}); err != nil {
-		log.Printf("store save: %v", err)
+		slog.Error("cancel persist failed", "cancel_id", c.ID, "cancels", originalID, "org_id", orgID, "err", err)
 	}
+	slog.Info("alert cancelled", "cancels", originalID, "cancel_id", c.ID, "source", source, "org_id", orgID)
 	return c, nil
 }
 
@@ -482,9 +491,9 @@ func (s *Server) RunHeartbeat(ctx context.Context) {
 		health, reason := s.selfCheck()
 		if reason != lastReason {
 			if reason != "" {
-				log.Printf("heartbeat: reporting DEGRADED — %s", reason)
+				slog.Error("heartbeat reporting DEGRADED", "reason", reason)
 			} else {
-				log.Printf("heartbeat: recovered, reporting ok")
+				slog.Info("heartbeat recovered", "health", alert.HealthOK)
 			}
 			lastReason = reason
 		}
@@ -531,7 +540,11 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db unreachable", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, map[string]any{"ready": true})
+	// Carry build identity: a self-hoster filing a bug, and any fleet-wide check,
+	// needs to know which build answered.
+	writeJSON(w, map[string]any{
+		"ready": true, "version": obs.Version(), "commit": obs.Commit(),
+	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

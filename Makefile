@@ -40,8 +40,15 @@ web-build:
 web-dev:
 	cd web-admin && npm run dev
 
+# Stamp build identity so `/readyz`, the startup log line and the
+# alerthub_build_info metric can answer "what are you running?".
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+LDFLAGS := -X github.com/kazuha/alerthub/server/internal/obs.version=$(VERSION) \
+           -X github.com/kazuha/alerthub/server/internal/obs.commit=$(COMMIT)
+
 build: web-build
-	go build -o bin/alerthub ./server
+	go build -ldflags "$(LDFLAGS)" -o bin/alerthub ./server
 
 test:
 	./scripts/conformance.sh

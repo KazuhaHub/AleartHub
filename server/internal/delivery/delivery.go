@@ -14,6 +14,7 @@ package delivery
 import (
 	"context"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/kazuha/alerthub/server/internal/alert"
@@ -158,8 +159,10 @@ func (m *Manager) deliver(ctx context.Context, j store.DeliveryJob, now int64) {
 			return
 		}
 		metrics.DeliveryAttempts.WithLabelValues(j.Channel, "dead").Inc()
-		log.Printf("delivery DEAD alert=%s ch=%s target=%s after %d attempts: %v",
-			j.AlertID, j.Channel, j.Target, j.Attempts, err)
+		// Dead-letter is a fail-loud signal: this alert did NOT reach this target.
+		slog.Error("delivery dead-letter",
+			"alert_id", j.AlertID, "channel", j.Channel, "target", j.Target,
+			"attempts", j.Attempts, "severity", j.Severity, "err", err)
 	default:
 		next := now + int64(m.backoff(j.Attempts)/time.Second)
 		if werr := m.st.RescheduleDelivery(j.ID, next, err.Error(), now); werr != nil {

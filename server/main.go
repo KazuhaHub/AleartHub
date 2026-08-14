@@ -29,6 +29,7 @@ import (
 	"github.com/kazuha/alerthub/server/internal/delivery"
 	"github.com/kazuha/alerthub/server/internal/eew"
 	"github.com/kazuha/alerthub/server/internal/ntfy"
+	"github.com/kazuha/alerthub/server/internal/obs"
 	"github.com/kazuha/alerthub/server/internal/passkey"
 	"github.com/kazuha/alerthub/server/internal/sso"
 	"github.com/kazuha/alerthub/server/internal/store"
@@ -79,8 +80,15 @@ func main() {
 		rpID     = env("ALERTHUB_RP_ID", "localhost")
 		rpOrigin = env("ALERTHUB_RP_ORIGIN", "http://localhost:8080")
 	)
+	// Structured logging first: everything below (including the standard log
+	// package, which slog.SetDefault re-routes) then emits parseable records.
+	obs.Setup(env("ALERTHUB_LOG_FORMAT", "json"), env("ALERTHUB_LOG_LEVEL", "info"))
+	// NB: no "version" attr here — obs.Setup already binds it to every record, and
+	// repeating it emits a duplicate JSON key that some log pipelines reject.
+	slog.Info("starting", "commit", obs.Commit(),
+		"http_addr", httpAddr, "db_driver", dbDriver)
 	if adminToken == "dev-admin-token" {
-		log.Println("WARNING: using the default admin token — set ALERTHUB_ADMIN_TOKEN for anything but local dev")
+		slog.Warn("using the default admin token — set ALERTHUB_ADMIN_TOKEN for anything but local dev")
 	}
 
 	priv, pubB64, err := loadOrGenKeys(keyDir)
@@ -88,7 +96,8 @@ func main() {
 		log.Fatalf("keys: %v", err)
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	// mochi is chatty at info; keep it at warn but on the same structured handler.
+	logger := slog.Default().With("component", "broker")
 	b, err := broker.New(tcpAddr, wsAddr, broker.Creds{
 		PublisherUser: pubUser, PublisherPass: pubPass,
 		ClientUser: cliUser, ClientPass: cliPass,

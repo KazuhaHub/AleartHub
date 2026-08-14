@@ -63,6 +63,8 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | `ALERTHUB_MQTT_WS` | `:1884` | MQTT/WebSocket 监听（浏览器客户端连这个） |
 | `ALERTHUB_WEB_DIR` | `web` | 告警客户端静态目录 |
 | `ALERTHUB_KEY_DIR` | `keys` | Ed25519 密钥 / JWT secret / KEK 存放目录 |
+| `ALERTHUB_LOG_FORMAT` | `json` | 日志格式：`json`（生产，可被 SIEM 解析）或 `text`（本地开发易读）|
+| `ALERTHUB_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 
 ### 存储
 
