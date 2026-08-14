@@ -210,6 +210,7 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | [docs/POSTGRES.md](docs/POSTGRES.md) | Enterprise 档：Postgres 接入、RLS 策略、最小权限角色、集成测试 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 最初的设计讨论存档 |
 | [SECURITY.md](SECURITY.md) | 漏洞披露流程、威胁模型边界、生产加固清单 |
+| [docs/rfc/](docs/rfc/) | 协议修订提案（改 LOCKED 章节前先走此流程）。当前：[RFC 0001 设备置备与设备面多租户](docs/rfc/0001-device-provisioning.md)（草案，待评审）|
 
 > 阅读顺序：线路协议看 SPEC.md，人身安全设计与**真实建设状态**看 SPEC-SAFETY.md §10/§11，企业架构与差距对照看 ARCHITECTURE.md §11，接口细节看 docs/API.md。各文档已与代码对齐；SPEC.md §0 明确标注了其中尚未落地的条款。
 
