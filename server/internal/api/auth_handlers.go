@@ -40,10 +40,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	u, err := s.Store.GetUserByUPN(req.UPN)
 	if err != nil || u.PasswordHash == "" || !u.Enabled || !auth.CheckPassword(u.PasswordHash, req.Password) {
 		metrics.Logins.WithLabelValues("password", "fail").Inc()
+		// Failed logins are recorded with the attempted name but never the password;
+		// a burst from one IP is exactly what this trail exists to surface.
+		s.auditLoginAttempt(r, req.UPN, false)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 	metrics.Logins.WithLabelValues("password", "success").Inc()
+	s.auditLoginAttempt(r, u.UPN, true)
 	// If 2FA is enrolled, password is only the first factor → return a pending token.
 	if s.TwoFA != nil {
 		if on, _ := s.TwoFA.Status(u.ID); on {

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/kazuha/alerthub/server/internal/store"
@@ -72,6 +73,7 @@ func (s *Server) handleOrgs(w http.ResponseWriter, r *http.Request) {
 		if c := claimsFrom(r); c != nil {
 			_ = s.Store.AddMembership(id, c.UserID, "owner") // creator owns the new org
 		}
+		s.audit(r, id, AuditOrgCreate, "org", strconv.FormatInt(id, 10), req.Slug)
 		writeJSON(w, orgDTO{ID: id, Slug: req.Slug, Name: req.Name})
 
 	default:

@@ -62,10 +62,12 @@ func (s *Server) handleCAPIngest(w http.ResponseWriter, r *http.Request) {
 		TTL:      m.TTL,
 		Nonce:    alert.NewNonce(),
 	}
-	if err := s.PublishAlert(a, s.orgFor(r)); err != nil {
+	org := s.orgFor(r)
+	if err := s.PublishAlert(a, org); err != nil {
 		http.Error(w, "publish failed", http.StatusBadGateway)
 		return
 	}
+	s.audit(r, org, AuditAlertPublish, "alert", a.ID, "CAP ingest from "+doc.Sender+" "+doc.Identifier)
 	metrics.CapIngest.WithLabelValues("ok").Inc()
 	writeJSON(w, map[string]any{
 		"id": a.ID, "severity": a.Severity, "category": a.Category, "test": m.IsTest,
@@ -91,6 +93,7 @@ func (s *Server) handleCAPCancel(w http.ResponseWriter, r *http.Request, doc *ca
 			http.Error(w, "cancel failed", http.StatusBadGateway)
 			return
 		}
+		s.audit(r, org, AuditAlertCancel, "alert", id, "CAP Cancel referencing "+ref.Sender+" "+ref.Identifier)
 		cancelled = append(cancelled, id)
 	}
 	metrics.CapIngest.WithLabelValues("cancel").Inc()

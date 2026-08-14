@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -59,6 +60,8 @@ func (s *Server) handleServiceAccounts(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "create failed", http.StatusInternalServerError)
 			return
 		}
+		s.audit(r, s.orgFor(r), AuditSACreate, "service_account", strconv.FormatInt(id, 10),
+			req.Name+" scopes="+strings.Join(req.Scopes, ","))
 		// token shown ONCE
 		writeJSON(w, map[string]any{"id": id, "name": req.Name, "scopes": req.Scopes, "token": token})
 	default:

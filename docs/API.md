@@ -311,6 +311,15 @@
 |---|---|---|
 | `GET /api/orgs` | 会话 | 超级管理员看到全部组织，其他用户只看到自己有成员关系的组织。 |
 | `POST /api/orgs` | 会话（**仅超级管理员**） | 创建组织。**仅当调用方是会话用户时**创建者才自动获得 `owner` 成员身份；用静态 admin token 调用不会写入成员行（无 JWT claims 可归属）。 |
+
+### 审计日志
+
+| 方法 路径 | 鉴权 | 说明 |
+|---|---|---|
+| `GET /api/audit?limit=N` | perm `settings:manage` | 当前组织的审计条目，最新在前（默认 100，上限 500）。每条含 `actor_type`（`user`/`service_account`/`admin_token`/`system`）、`actor_name`、`action`、`target_id`、`ip`、`prev_hash`、`hash`。 |
+| `GET /api/audit/verify` | perm `settings:manage` + **仅超级管理员** | 重算整条哈希链。返回 `{ok, entries, bad_id?, reason?}`。链是**全局**的（跨租户，保护平台完整性），故校验是平台级操作；组织管理员只能读自己那份过滤视图。 |
+
+记录的动作：`alert.publish`、`alert.cancel`、`auth.login`、`auth.login_failed`、`service_account.create`、`org.create`。审计写入是 **best-effort**：写失败会大声记日志，但**不会**让原动作失败——因为审计表不可用而拒绝广播紧急警报，是更糟的结果。
 | `GET /api/admin/service-accounts` | `perm:sa:manage` | 列出活动组织的服务账号。 |
 | `POST /api/admin/service-accounts` | `perm:sa:manage` | 创建服务账号，**明文 key 只返回一次**。 |
 | `POST /api/admin/service-accounts/delete` | `perm:sa:manage` | 请求体 `{"id": 1}`，成功 `204`。 |

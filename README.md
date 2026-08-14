@@ -190,7 +190,8 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | 管理控制台：React 19 + Ant Design 6 + Vite 8，M3 动态取色（6 套预设 / 明暗自动），中英 i18n，go:embed 内嵌 | ✅ 仪表盘 / 发布 / **设备** / **历史** / 设置均已实装；仅 `/sources` 仍是占位（它需要一个尚不存在的来源配置接口） |
 | CI：4 个 job（SQLite 门禁 / Postgres RLS / Node 22 签名一致性 / SPA typecheck + build） | ✅ |
 | **设备与广播面仍是单租户**：`/api/devices` 返回全局在线名册，`alerts/active`、`alerts/events` 是全局 topic，设备没有 `org_id`（设备下发未建）。**即：控制面多租户，设备面单租户** | ❌ |
-| SCIM 2.0、审计日志、EMQX 集群总线、leader 选举 | ❌ 未开始 |
+| **审计日志**：`audit_log` 哈希链（篡改可检出）、append-only、`GET /api/audit` + `/api/audit/verify` | ✅ 已实现（仍缺 SIEM 导出与留存策略）|
+| SCIM 2.0、EMQX 集群总线、leader 选举 | ❌ 未开始 |
 
 ---
 

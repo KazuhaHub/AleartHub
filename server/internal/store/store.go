@@ -10,8 +10,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
+	"sync"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // "pgx" driver (PostgreSQL)
 	"github.com/kazuha/alerthub/server/internal/alert"
@@ -31,7 +33,13 @@ type Store struct {
 	db     *sql.DB // pool: DDL, Ping, Close, BeginOrg live here
 	ex     execer  // where wrapped queries run: db by default, or a per-request tx
 	driver string  // "sqlite" | "postgres"
+	// auditMu serialises read-head-then-append on the audit hash chain. It is a
+	// POINTER so the tx-bound clone from BeginOrg shares the same lock — a copied
+	// mutex would let two writers chain onto the same predecessor and fork it.
+	auditMu *sync.Mutex
 }
+
+func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 
 // Open opens (or creates) the SQLite database at path — the single-binary tier.
 func Open(path string) (*Store, error) {
@@ -39,7 +47,7 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db, driver: "sqlite"}
+	s := &Store{db: db, driver: "sqlite", auditMu: &sync.Mutex{}}
 	s.ex = db
 	if err := s.migrate(); err != nil {
 		db.Close()
@@ -59,7 +67,7 @@ func OpenPostgres(dsn string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	s := &Store{db: db, driver: "postgres"}
+	s := &Store{db: db, driver: "postgres", auditMu: &sync.Mutex{}}
 	s.ex = db
 	if err := s.migrate(); err != nil {
 		db.Close()
@@ -129,7 +137,7 @@ func (s *Store) BeginOrg(ctx context.Context, orgID int64) (*Store, *sql.Tx, err
 		_ = tx.Rollback()
 		return nil, nil, err
 	}
-	return &Store{db: s.db, ex: tx, driver: s.driver}, tx, nil
+	return &Store{db: s.db, ex: tx, driver: s.driver, auditMu: s.auditMu}, tx, nil
 }
 
 // insertID runs an INSERT and returns the generated id portably. RETURNING is
@@ -201,6 +209,16 @@ func (s *Store) migrateSQLite() error {
 			created_at INTEGER NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			org_id INTEGER NOT NULL, at INTEGER NOT NULL,
+			actor_type TEXT NOT NULL, actor_id INTEGER NOT NULL DEFAULT 0,
+			actor_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL,
+			target_type TEXT NOT NULL DEFAULT '', target_id TEXT NOT NULL DEFAULT '',
+			detail TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '',
+			prev_hash TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS audit_log_org ON audit_log(org_id, id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS delivery_jobs_uniq ON delivery_jobs(alert_id, channel, target)`,
 		`CREATE INDEX IF NOT EXISTS delivery_jobs_claim ON delivery_jobs(status, next_attempt_at)`,
 	}
@@ -275,6 +293,16 @@ func (s *Store) migratePostgres() error {
 			created_at BIGINT NOT NULL DEFAULT 0,
 			updated_at BIGINT NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_log (
+			id BIGSERIAL PRIMARY KEY,
+			org_id BIGINT NOT NULL, at BIGINT NOT NULL,
+			actor_type TEXT NOT NULL, actor_id BIGINT NOT NULL DEFAULT 0,
+			actor_name TEXT NOT NULL DEFAULT '', action TEXT NOT NULL,
+			target_type TEXT NOT NULL DEFAULT '', target_id TEXT NOT NULL DEFAULT '',
+			detail TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '',
+			prev_hash TEXT NOT NULL DEFAULT '', hash TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS audit_log_org ON audit_log(org_id, id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS delivery_jobs_uniq ON delivery_jobs(alert_id, channel, target)`,
 		`CREATE INDEX IF NOT EXISTS delivery_jobs_claim ON delivery_jobs(status, next_attempt_at)`,
 	}

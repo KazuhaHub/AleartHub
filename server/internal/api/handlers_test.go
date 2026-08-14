@@ -571,3 +571,120 @@ func Test2FAEnable_RejectsWrongCode(t *testing.T) {
 		t.Fatalf("enable with a wrong code = %d, want 400", w.Code)
 	}
 }
+
+// --- audit trail ------------------------------------------------------------
+
+// TestAudit_RecordsPublishAndCancel proves the trail answers the question it
+// exists for: who fired that alert, and who recalled it.
+func TestAudit_RecordsPublishAndCancel(t *testing.T) {
+	ts := newTestServer(t)
+	pw := ts.req(t, http.MethodPost, "/api/publish", validPublish(), adminHdr())
+	if pw.Code != http.StatusOK {
+		t.Fatalf("publish = %d", pw.Code)
+	}
+	var a alert.Alert
+	_ = json.Unmarshal(pw.Body.Bytes(), &a)
+	if w := ts.req(t, http.MethodPost, "/api/cancel", cancelReq{ID: a.ID}, adminHdr()); w.Code != http.StatusOK {
+		t.Fatalf("cancel = %d", w.Code)
+	}
+
+	w := ts.req(t, http.MethodGet, "/api/audit", nil, adminHdr())
+	if w.Code != http.StatusOK {
+		t.Fatalf("audit list = %d; body=%s", w.Code, w.Body.String())
+	}
+	var entries []store.AuditEntry
+	if err := json.Unmarshal(w.Body.Bytes(), &entries); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	byAction := map[string]store.AuditEntry{}
+	for _, e := range entries {
+		byAction[e.Action] = e
+	}
+	pub, ok := byAction[AuditAlertPublish]
+	if !ok {
+		t.Fatalf("no %s entry in %+v", AuditAlertPublish, entries)
+	}
+	if pub.TargetID != a.ID {
+		t.Errorf("publish entry targets %q, want the alert id %q", pub.TargetID, a.ID)
+	}
+	if pub.ActorType != store.ActorAdminToken {
+		t.Errorf("actor_type = %q, want %q for the static token", pub.ActorType, store.ActorAdminToken)
+	}
+	if _, ok := byAction[AuditAlertCancel]; !ok {
+		t.Error("cancel was not recorded")
+	}
+	if pub.Hash == "" {
+		t.Error("entries must carry their chain hash")
+	}
+}
+
+// A failed login must be recorded — a burst of them is the signal this trail is
+// meant to surface — and the password must never appear in it.
+func TestAudit_RecordsFailedLogin(t *testing.T) {
+	ts := newTestServer(t)
+	const password = "hunter2-should-never-be-logged"
+	if w := ts.req(t, http.MethodPost, "/api/auth/login",
+		loginReq{UPN: "ghost@x", Password: password}, nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("login = %d, want 401", w.Code)
+	}
+	w := ts.req(t, http.MethodGet, "/api/audit", nil, adminHdr())
+	var entries []store.AuditEntry
+	_ = json.Unmarshal(w.Body.Bytes(), &entries)
+
+	var found bool
+	for _, e := range entries {
+		if e.Action == AuditLoginFailed {
+			found = true
+			if e.ActorName != "ghost@x" {
+				t.Errorf("failed login should record the attempted name, got %q", e.ActorName)
+			}
+		}
+		if strings.Contains(e.Detail, password) || strings.Contains(e.TargetID, password) {
+			t.Fatal("SECURITY: the attempted password leaked into the audit trail")
+		}
+	}
+	if !found {
+		t.Fatalf("no %s entry recorded", AuditLoginFailed)
+	}
+}
+
+func TestAudit_RequiresPermission(t *testing.T) {
+	ts := newTestServer(t)
+	viewer := ts.seedUser(t, "av@x", "viewer") // viewer lacks settings:manage
+	if w := ts.req(t, http.MethodGet, "/api/audit", nil, userHdr(viewer)); w.Code != http.StatusForbidden {
+		t.Fatalf("viewer reading the audit trail = %d, want 403", w.Code)
+	}
+	if w := ts.req(t, http.MethodGet, "/api/audit", nil, nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth audit = %d, want 401", w.Code)
+	}
+}
+
+func TestAuditVerify_Endpoint(t *testing.T) {
+	ts := newTestServer(t)
+	_ = ts.req(t, http.MethodPost, "/api/publish", validPublish(), adminHdr())
+
+	w := ts.req(t, http.MethodGet, "/api/audit/verify", nil, adminHdr())
+	if w.Code != http.StatusOK {
+		t.Fatalf("verify = %d; body=%s", w.Code, w.Body.String())
+	}
+	var res store.AuditChainResult
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !res.OK || res.Entries == 0 {
+		t.Fatalf("verify = %+v, want an intact chain with entries", res)
+	}
+}
+
+// Verifying the GLOBAL chain reads across tenants, so an org admin must not be
+// able to run it even though they can read their own trail.
+func TestAuditVerify_SuperAdminOnly(t *testing.T) {
+	ts := newTestServer(t)
+	orgAdmin := ts.seedUser(t, "oa@x", "org_admin") // has settings:manage, not superadmin
+	if w := ts.req(t, http.MethodGet, "/api/audit", nil, userHdr(orgAdmin)); w.Code != http.StatusOK {
+		t.Fatalf("org admin reading its own trail = %d, want 200", w.Code)
+	}
+	if w := ts.req(t, http.MethodGet, "/api/audit/verify", nil, userHdr(orgAdmin)); w.Code != http.StatusForbidden {
+		t.Fatalf("org admin verifying the global chain = %d, want 403", w.Code)
+	}
+}

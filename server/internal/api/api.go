@@ -120,6 +120,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/devices", s.requirePerm(auth.PermDeviceRead, s.handleDevices))
 	mux.HandleFunc("/api/delivery/stats", s.requirePerm(auth.PermAlertRead, s.handleDeliveryStats))
 	mux.HandleFunc("/api/orgs", s.requireRole(auth.RoleUser, s.handleOrgs))
+	// Audit trail (RBAC: settings:manage; verifying the global chain is super-only).
+	mux.HandleFunc("/api/audit", s.requirePerm(auditPerm, s.handleAudit))
+	mux.HandleFunc("/api/audit/verify", s.requirePerm(auditPerm, s.handleAuditVerify))
 	mux.HandleFunc("/pubkey", s.handlePubkey)
 	// Observability (ARCHITECTURE §6).
 	mux.Handle("/metrics", metrics.Handler())
@@ -221,10 +224,12 @@ func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		Nonce:         alert.NewNonce(),
 		Cancels:       "",
 	}
-	if err := s.PublishAlert(a, s.orgFor(r)); err != nil {
+	org := s.orgFor(r)
+	if err := s.PublishAlert(a, org); err != nil {
 		http.Error(w, "publish failed", http.StatusBadGateway)
 		return
 	}
+	s.audit(r, org, AuditAlertPublish, "alert", a.ID, a.Severity+"/"+a.Category+" "+a.Title)
 	writeJSON(w, a)
 }
 
@@ -310,11 +315,13 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad json or missing id", http.StatusBadRequest)
 		return
 	}
-	c, err := s.CancelByID(req.ID, "panel", s.orgFor(r))
+	org := s.orgFor(r)
+	c, err := s.CancelByID(req.ID, "panel", org)
 	if err != nil {
 		http.Error(w, "publish failed", http.StatusBadGateway)
 		return
 	}
+	s.audit(r, org, AuditAlertCancel, "alert", req.ID, "recalled via panel")
 	writeJSON(w, c)
 }
 
