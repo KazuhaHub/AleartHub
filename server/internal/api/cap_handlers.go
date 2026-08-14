@@ -40,6 +40,16 @@ func (s *Server) handleCAPIngest(w http.ResponseWriter, r *http.Request) {
 		s.handleCAPCancel(w, r, doc)
 		return
 	}
+	// CAP Update supersedes what it references (CAP 1.2 §3.2.1). Re-issuing under
+	// the REFERENCED alert's id — rather than publishing a second, unrelated
+	// alert — is what makes it a supersede: clients keep one alert that updates in
+	// place, and only re-alarm if the Update raised the severity (SPEC §5.2).
+	supersedes := ""
+	if m.MsgType == "Update" {
+		if refs := cap.ParseReferences(doc.References); len(refs) > 0 {
+			supersedes = cap.AlertID(refs[0].Sender, refs[0].Identifier)
+		}
+	}
 	m.Title, m.Body, m.Action = oneline(m.Title), oneline(m.Body), oneline(m.Action)
 	if err := alert.ValidateInput(m.Severity, m.Category, m.Title, m.Body, m.Action, "cap"); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -50,7 +60,9 @@ func (s *Server) handleCAPIngest(w http.ResponseWriter, r *http.Request) {
 		// Deterministic id from (sender, identifier) so a later CAP Cancel can recall
 		// it (see cap.AlertID). An Update re-using the same identifier maps to the same
 		// id → clients dedup/renew rather than double-alarm.
-		ID:       cap.AlertID(doc.Sender, doc.Identifier),
+		// An Update takes over the referenced alert's id; anything else is keyed on
+		// its own (sender, identifier).
+		ID:       firstNonEmptyStr(supersedes, cap.AlertID(doc.Sender, doc.Identifier)),
 		Type:     "alert",
 		Category: m.Category,
 		Severity: m.Severity,
@@ -67,10 +79,15 @@ func (s *Server) handleCAPIngest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "publish failed", http.StatusBadGateway)
 		return
 	}
-	s.audit(r, org, AuditAlertPublish, "alert", a.ID, "CAP ingest from "+doc.Sender+" "+doc.Identifier)
+	detail := "CAP ingest from " + doc.Sender + " " + doc.Identifier
+	if supersedes != "" {
+		detail = "CAP Update superseding " + supersedes
+	}
+	s.audit(r, org, AuditAlertPublish, "alert", a.ID, detail)
 	metrics.CapIngest.WithLabelValues("ok").Inc()
 	writeJSON(w, map[string]any{
-		"id": a.ID, "severity": a.Severity, "category": a.Category, "test": m.IsTest,
+		"id": a.ID, "severity": a.Severity, "category": a.Category,
+		"test": m.IsTest, "supersedes": supersedes,
 	})
 }
 
@@ -98,4 +115,14 @@ func (s *Server) handleCAPCancel(w http.ResponseWriter, r *http.Request, doc *ca
 	}
 	metrics.CapIngest.WithLabelValues("cancel").Inc()
 	writeJSON(w, map[string]any{"cancelled": cancelled})
+}
+
+// firstNonEmptyStr returns the first non-empty argument.
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

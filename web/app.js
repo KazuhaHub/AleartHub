@@ -280,7 +280,46 @@ async function onMessage(topic, buf) {
   if (!res.ok) { console.debug("[alerthub] drop", res.reason, a && a.id); return; }
   if (a.type === "cancel") { handleCancel(a.cancels); return; }
   if (cancelledSet.has(a.id)) return; // recalled before we saw it
+
+  // SPEC §5.2: a re-issue under a known id either extends the alert or escalates
+  // it. Extending must be silent — re-alarming for an unchanged warning is how
+  // you train people to ignore alerts. Escalating must NOT be silent, because a
+  // 震度4 that turns out to be 6弱 is a different instruction to the person
+  // reading it.
+  if (res.renewal) {
+    console.debug("[alerthub] renewal", a.id, "ttl ->", a.ttl);
+    extendAlert(a);
+    return;
+  }
+  if (res.escalation) {
+    console.debug("[alerthub] ESCALATION", a.id, "->", a.severity);
+    renderAlert(a); // full presentation again: new severity, new instruction
+    return;
+  }
   renderAlert(a);
+}
+
+// extendAlert refreshes a live alert's validity window (and its wording, which a
+// CAP Update may have changed) WITHOUT re-triggering the fullscreen takeover, the
+// siren, or the acknowledgement requirement.
+function extendAlert(a) {
+  const live = activeFs.find((x) => x.id === a.id);
+  if (!live) {
+    // We never presented it — either it was a toast, or we joined late. Present
+    // it now rather than silently extending something the user cannot see.
+    renderAlert(a);
+    return;
+  }
+  // Mutate in place: showTop() re-renders from this object, so the wording and
+  // the new expiry take effect without tearing the overlay down and rebuilding
+  // it (which would look like a fresh alarm).
+  live.issued_at = a.issued_at;
+  live.ttl = a.ttl;
+  live.title = a.title;
+  live.body = a.body;
+  live.action = a.action;
+  scheduleExpiry(live); // the extended TTL needs its own dismissal timer
+  showTop();
 }
 
 function publishAck(id) {

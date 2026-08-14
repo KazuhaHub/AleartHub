@@ -122,18 +122,67 @@ function saveSeen(seen) {
   } catch {}
 }
 
-const seen = loadSeen();
+// Per-ALERT state, kept separately from the nonce set: a renewal re-uses the id
+// but carries a fresh nonce, so the two need different bookkeeping. We remember
+// the last issued_at and severity per id in order to tell a stale re-delivery,
+// a renewal and an escalation apart (SPEC §5.2).
+const SEEN_ALERTS_KEY = "alerthub_seen_alerts_v1";
 
-// Returns { ok: true } if the message should be acted on, else { ok:false, reason }.
+function loadSeenAlerts() {
+  try {
+    return new Map(JSON.parse(localStorage.getItem(SEEN_ALERTS_KEY) || "[]"));
+  } catch {
+    return new Map();
+  }
+}
+function saveSeenAlerts(m) {
+  try {
+    localStorage.setItem(SEEN_ALERTS_KEY, JSON.stringify([...m]));
+  } catch {}
+}
+
+const seen = loadSeen();
+const seenAlerts = loadSeenAlerts();
+
+const SEV_RANK = { notice: 0, warning: 1, critical: 2, emergency: 3 };
+
+// acceptAlert implements the SPEC §4 accept gate plus the §5.2 renewal rules.
+//
+// A re-issue under a known id is NOT the same thing as a replay. A replay is a
+// captured packet resent verbatim — it carries the same nonce, and that is what
+// the nonce check catches. A renewal is a fresh message the server signed to
+// extend or update a live alert, and dropping it (as this used to) meant §5.2
+// simply did not work.
+//
+// Returns { ok, reason?, renewal?, escalation? }:
+//   ok:false            → drop
+//   ok:true             → new alert, present it
+//   ok:true, renewal    → known id, newer, severity NOT higher: extend only,
+//                         do not re-alarm (re-alarming trains people to ignore alerts)
+//   ok:true, escalation → known id, newer, severity HIGHER: present again. This is
+//                         a safety requirement — an EEW going 震度4 → 6弱, or a CAP
+//                         Update raising Moderate → Extreme, must not pass quietly.
 export async function acceptAlert(a, pubRaw, maxSkew = 120) {
   if (!(await verifyAlert(a, pubRaw))) return { ok: false, reason: "bad-sig" };
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - a.issued_at) > maxSkew) return { ok: false, reason: "stale" };
-  if (seen.has(a.id) || seen.has("n:" + a.nonce)) return { ok: false, reason: "dup" };
+  // The nonce is per-message, so a repeat of it is a genuine replay.
+  if (seen.has("n:" + a.nonce)) return { ok: false, reason: "dup" };
   if (now - a.issued_at > a.ttl) return { ok: false, reason: "expired" };
-  seen.set(a.id, a.issued_at);
+
+  const prev = seenAlerts.get(a.id);
+  let renewal = false, escalation = false;
+  if (prev) {
+    if (a.issued_at <= prev.issued_at) return { ok: false, reason: "dup" }; // stale re-delivery
+    if ((SEV_RANK[a.severity] ?? 0) > (SEV_RANK[prev.severity] ?? 0)) escalation = true;
+    else renewal = true;
+  }
+
   seen.set("n:" + a.nonce, a.issued_at);
+  seenAlerts.set(a.id, { issued_at: a.issued_at, severity: a.severity });
   for (const [k, t] of seen) if (now - t > maxSkew) seen.delete(k); // bounded sweep
+  for (const [k, v] of seenAlerts) if (now - v.issued_at > maxSkew) seenAlerts.delete(k);
   saveSeen(seen);
-  return { ok: true };
+  saveSeenAlerts(seenAlerts);
+  return { ok: true, renewal, escalation };
 }

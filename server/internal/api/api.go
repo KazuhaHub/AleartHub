@@ -292,6 +292,19 @@ func (s *Server) PublishAlert(a *alert.Alert, orgID int64) error {
 	return nil
 }
 
+// RenewAlert re-issues an existing alert under the SAME id with a fresh
+// issued_at/ttl/nonce (SPEC §5.2). Clients that already saw the id extend it
+// silently; if the severity has risen they present it again as an escalation.
+//
+// The nonce MUST be fresh — re-using it would make the renewal look like a
+// replay to the client's accept gate, which is exactly what the nonce is for.
+func (s *Server) RenewAlert(a *alert.Alert, orgID int64) error {
+	a.IssuedAt = time.Now().Unix()
+	a.Nonce = alert.NewNonce()
+	a.Sig = "" // re-signed by PublishAlert over the new canonical bytes
+	return s.PublishAlert(a, orgID)
+}
+
 // maybeSetActive applies the SPEC §5 replacement policy: overwrite the retained
 // active slot only if the new alert is equal-or-higher severity than the current
 // one, or the current one has expired.

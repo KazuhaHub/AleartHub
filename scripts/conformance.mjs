@@ -1,15 +1,15 @@
 // Cross-language signing conformance: publish via the Go server, then verify the
 // Go-produced signature using the SAME web/verify.js the browser client uses.
 // Proves SPEC §3 canonicalization is byte-identical across Go and JS.
-import { canonicalBytes, canonicalHeartbeatBytes, b64urlToBytes, verifyAlert, verifyHeartbeat } from "../web/verify.js";
+import { canonicalBytes, canonicalHeartbeatBytes, b64urlToBytes, verifyAlert, verifyHeartbeat, acceptAlert } from "../web/verify.js";
 
-const base = process.env.BASE || "http://localhost:8080";
+const base_ = process.env.BASE || "http://localhost:8080";
 const token = process.env.ALERTHUB_ADMIN_TOKEN || "dev-admin-token";
 
-const cfg = await (await fetch(base + "/pubkey")).json();
+const cfg = await (await fetch(base_ + "/pubkey")).json();
 const pubRaw = b64urlToBytes(cfg.pubkey);
 
-const env = await (await fetch(base + "/api/publish", {
+const env = await (await fetch(base_ + "/api/publish", {
   method: "POST",
   headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
   body: JSON.stringify({
@@ -42,6 +42,24 @@ if (hbJSON) {
   hbTamperRejected = (await verifyHeartbeat(hbTampered, pubRaw)) === false;
 }
 
+// --- §5.2 accept-gate: replay vs renewal vs escalation -----------------------
+// This classification lives ONLY in web/verify.js — no Go test can reach it — and
+// it decides whether a re-issued alert stays silent or alarms again, which is a
+// safety behaviour. The fixtures are signed by the same Go code the server uses
+// (server/cmd/gatefixtures), because the client cannot forge them itself.
+const gate = { first: null, replay: null, stale: null, renewal: null, escalation: null };
+const fixJSON = process.env.ALERTHUB_GATE_JSON;
+if (fixJSON) {
+  const f = JSON.parse(fixJSON);
+  gate.first      = (await acceptAlert(f.base, pubRaw)).ok === true;
+  gate.replay     = (await acceptAlert(f.base, pubRaw)).ok === false;      // same nonce
+  gate.stale      = (await acceptAlert(f.stale, pubRaw)).ok === false;     // older issued_at
+  const r         = await acceptAlert(f.renewal, pubRaw);
+  gate.renewal    = r.ok === true && r.renewal === true && r.escalation !== true;
+  const e         = await acceptAlert(f.escalation, pubRaw);
+  gate.escalation = e.ok === true && e.escalation === true;
+}
+
 console.log("envelope id :", env.id);
 console.log("canonical   :", JSON.stringify(new TextDecoder().decode(canonicalBytes(env))));
 console.log("VERIFY (Go-signed -> web/verify.js):", ok ? "✅ PASS" : "❌ FAIL");
@@ -53,6 +71,14 @@ if (hbJSON) {
 } else {
   console.log("HEARTBEAT                          : ⚠️  SKIPPED (no ALERTHUB_HB_JSON)");
 }
+if (fixJSON) {
+  console.log("GATE accept / replay / stale       :", gate.first && gate.replay && gate.stale ? "✅ PASS" : "❌ FAIL");
+  console.log("GATE renewal is SILENT (§5.2)      :", gate.renewal ? "✅ PASS" : "❌ FAIL");
+  console.log("GATE escalation RE-ALARMS (§5.2)   :", gate.escalation ? "✅ PASS" : "❌ FAIL");
+} else {
+  console.log("GATE §5.2                          : ⚠️  SKIPPED (no ALERTHUB_GATE_JSON)");
+}
 
-const allPass = ok && tamperRejected && (!hbJSON || (hbOK && hbTamperRejected));
+const gateOK = !fixJSON || (gate.first && gate.replay && gate.stale && gate.renewal && gate.escalation);
+const allPass = ok && tamperRejected && (!hbJSON || (hbOK && hbTamperRejected)) && gateOK;
 process.exit(allPass ? 0 : 1);

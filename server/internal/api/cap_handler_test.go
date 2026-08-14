@@ -106,3 +106,99 @@ func TestCAPCancel_NoReferences400(t *testing.T) {
 		t.Fatalf("cancel without <references> = %d, want 400", w.Code)
 	}
 }
+
+// TestCAPUpdate_SupersedesReferencedAlert: a CAP Update must take over the
+// referenced alert's id rather than publishing a second, unrelated alert —
+// otherwise a worsening situation shows up as two competing warnings.
+func TestCAPUpdate_SupersedesReferencedAlert(t *testing.T) {
+	ts := newTestServer(t)
+	if w := ts.capPost(t, capAlertXML); w.Code != http.StatusOK {
+		t.Fatalf("initial ingest = %d", w.Code)
+	}
+	original := cap.AlertID("jma", "EQ-100")
+
+	updateXML := `<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+	  <identifier>EQ-100-U</identifier><sender>jma</sender><sent>2026-06-14T14:25:00+09:00</sent>
+	  <status>Actual</status><msgType>Update</msgType><scope>Public</scope>
+	  <references>jma,EQ-100,2026-06-14T14:23:01+09:00</references>
+	  <info><category>Geo</category><event>Earthquake</event>
+	  <urgency>Immediate</urgency><severity>Extreme</severity><certainty>Observed</certainty>
+	  <headline>震度上方修正</headline></info>
+	</alert>`
+	w := ts.capPost(t, updateXML)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update = %d; body=%s", w.Code, w.Body.String())
+	}
+	var got struct {
+		ID         string `json:"id"`
+		Supersedes string `json:"supersedes"`
+		Severity   string `json:"severity"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ID != original {
+		t.Fatalf("Update published id %q, want the referenced alert's id %q", got.ID, original)
+	}
+	if got.Supersedes != original {
+		t.Errorf("supersedes = %q, want %q", got.Supersedes, original)
+	}
+	if got.Severity != "emergency" {
+		t.Errorf("severity = %q, want emergency (Immediate+Extreme+Observed)", got.Severity)
+	}
+}
+
+// An Update with no <references> has nothing to supersede, so it stands on its
+// own identifier rather than silently attaching to something arbitrary.
+func TestCAPUpdate_WithoutReferencesIsItsOwnAlert(t *testing.T) {
+	ts := newTestServer(t)
+	updateXML := `<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+	  <identifier>U-ALONE</identifier><sender>jma</sender><status>Actual</status><msgType>Update</msgType>
+	  <info><category>Geo</category><event>x</event>
+	  <urgency>Immediate</urgency><severity>Severe</severity><certainty>Observed</certainty>
+	  <headline>h</headline></info></alert>`
+	w := ts.capPost(t, updateXML)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update = %d", w.Code)
+	}
+	var got struct {
+		ID         string `json:"id"`
+		Supersedes string `json:"supersedes"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if got.Supersedes != "" {
+		t.Errorf("supersedes = %q, want empty", got.Supersedes)
+	}
+	if got.ID != cap.AlertID("jma", "U-ALONE") {
+		t.Errorf("id = %q, want its own deterministic id", got.ID)
+	}
+}
+
+// TestRenewAlert_SameIdFreshNonce pins the mechanic §5.2 depends on: the id is
+// preserved so clients recognise it, but issued_at and nonce are fresh — a
+// re-used nonce would make the renewal look like a replay and be dropped.
+func TestRenewAlert_SameIdFreshNonce(t *testing.T) {
+	ts := newTestServer(t)
+	pw := ts.req(t, http.MethodPost, "/api/publish", validPublish(), adminHdr())
+	var a alert.Alert
+	_ = json.Unmarshal(pw.Body.Bytes(), &a)
+
+	before := a
+	renewed := a
+	renewed.TTL = 600
+	if err := ts.srv.RenewAlert(&renewed, ts.srv.DefaultOrgID); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	if renewed.ID != before.ID {
+		t.Fatalf("renewal changed the id: %q -> %q", before.ID, renewed.ID)
+	}
+	if renewed.Nonce == before.Nonce {
+		t.Fatal("renewal MUST carry a fresh nonce, or the client's replay check drops it")
+	}
+	if renewed.IssuedAt < before.IssuedAt {
+		t.Error("renewal must not move issued_at backwards")
+	}
+	if !alert.Verify(&renewed, ts.pub) {
+		t.Fatal("the renewed alert must be re-signed over its new canonical bytes")
+	}
+}

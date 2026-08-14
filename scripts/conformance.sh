@@ -28,4 +28,8 @@ done
 ALERTHUB_HB_JSON="$(go run ./server/cmd/hbgen)"
 export ALERTHUB_HB_JSON
 
+# Signed fixtures for the §5.2 accept-gate branches (see conformance.mjs).
+ALERTHUB_GATE_JSON="$(ALERTHUB_NOW="$(date +%s)" go run ./server/cmd/gatefixtures)"
+export ALERTHUB_GATE_JSON
+
 node scripts/conformance.mjs

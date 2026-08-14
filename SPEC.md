@@ -15,7 +15,7 @@
 
 | 条款 | 规范要求 | 现状 |
 |---|---|---|
-| §5.2 | `emergency` 由服务端**续期**（同 `id` + 新 `issued_at`/`ttl` 重发）| ❌ 未实现。清扫器只会清空过期的 active 槽，不重发。 |
+| §5.2 | `emergency` 由服务端**续期**（同 `id` + 新 `issued_at`/`ttl` 重发）| ✅ 已实现（服务端 `RenewAlert` + 客户端续期/升级分流）。|
 | §5.3 | 面板订阅 `alerts/+/ack/#` 构建「谁已确认」名册 | ❌ 未实现。客户端**会写** ack（`web/app.js`），但服务端只订阅 `status/#`，无人收集 ack。 |
 | §8 | 客户端接受**有序公钥列表**以支持轮换 | ❌ 未实现。客户端只持单一公钥；轮换需停机换钥。 |
 | §9 | Arm 手势一并申请 `Notification.requestPermission()` | ❌ 未实现。只解锁了音频。 |
@@ -153,9 +153,24 @@ Go `base64.RawURLEncoding`；JS 自带 helper；Kotlin `getUrlEncoder().withoutP
 
 **客户端收到合法 cancel 时**：按 `cancels` 的 id 在本地 active 集合里查 → 命中则拆除其全屏、停其警报音、清其强制确认；未命中（自己没见过原警报）则记入 cancelled-set，使原警报若稍后乱序到达被抑制。空 retained payload 到 `alerts/active` 同样是「无生效」信号。
 
-### 5.2 过期自愈
+### 5.2 过期自愈与续期（renewal / supersede）
 
-服务端跑 TTL 清扫器：active 警报 TTL 到期未续期 → 清空 `alerts/active`（空 retained）。需更久存活的 `emergency` 由服务端**续期**（用同一 `id` + 新 `issued_at`/`ttl` 重发；客户端按 id dedup，不会重复弹，只延长有效期）。
+服务端跑 TTL 清扫器：active 警报 TTL 到期未续期 → 清空 `alerts/active`（空 retained）。
+
+需更久存活或内容有更新的警报由服务端**续期**：用**同一 `id`** + 新 `issued_at`/`ttl`/`nonce` 重发（`nonce` 必须换新，否则会被客户端当重放丢弃）。
+
+**客户端对「已见过的 id」的处理规则（LOCKED）：**
+
+| 情况 | 判定 | 行为 |
+|---|---|---|
+| `nonce` 已见过 | **重放** | 丢弃（`dup`）|
+| id 已见过，`issued_at` **不比已存的新** | 乱序/重复投递 | 丢弃（`dup`）|
+| id 已见过，`issued_at` 更新，severity **未升高** | **续期** | **不重弹、不重响**，只延长有效期与自动消失时间 |
+| id 已见过，`issued_at` 更新，severity **升高** | **升级** | **必须重新强呈现**（重弹 + 重响 + 重新要求确认）|
+
+最后一行是安全要求，不是优化：EEW 从「震度4」升到「震度6弱」、CAP `Update` 把 `Moderate` 提到 `Extreme`，若沿用「续期不重弹」会造成**漏报**。反之，severity 未升高时重弹会训练用户忽略警报，同样有害。
+
+> 续期仍须通过 §4 的全部检查（验签、时钟窗、TTL）。`nonce` 去重不受影响——它防的是重放一条**原样抓包**，而续期是服务端新签的另一条消息。
 
 ### 5.3 确认（forced ack）
 
