@@ -18,20 +18,35 @@ type Heartbeat struct {
 	IssuedAt      int64  `json:"issued_at"` // unix seconds — also the client clock-drift reference
 	Interval      int64  `json:"interval"`  // seconds; clients derive their timeout from this
 	ActiveCount   int    `json:"active_count"`
-	Sig           string `json:"sig"`
+	// Health is the server's own verdict on itself. Before this existed the beat
+	// was unconditionally "green": a server whose store was unreachable still told
+	// every client it was fine, which defeats the point of a fail-loud channel.
+	// It is SIGNED, so a compromised LAN device cannot downgrade or forge it.
+	Health string `json:"health"` // HealthOK | HealthDegraded
+	Sig    string `json:"sig"`
 }
 
-// CanonicalHeartbeat builds the signed bytes. The leading domain tag "hb1" is
+// Heartbeat health values. Kept to a closed set of newline-free constants so they
+// can never break the canonical field framing.
+const (
+	HealthOK       = "ok"
+	HealthDegraded = "degraded"
+)
+
+// CanonicalHeartbeat builds the signed bytes. The leading domain tag "hb2" is
 // DISTINCT from the alert canonical (which leads with schema_version "1"), so an
-// alert signature can never be replayed as a heartbeat or vice versa.
+// alert signature can never be replayed as a heartbeat or vice versa. The tag was
+// bumped hb1 -> hb2 when the health field joined the signed set: an old 5-field
+// beat and a new 6-field one must never cross-verify.
 // MUST stay byte-identical with web/verify.js canonicalHeartbeatBytes().
 func CanonicalHeartbeat(h *Heartbeat) []byte {
 	parts := []string{
-		"hb1",
+		"hb2",
 		strconv.FormatInt(h.Seq, 10),
 		strconv.FormatInt(h.IssuedAt, 10),
 		strconv.FormatInt(h.Interval, 10),
 		strconv.Itoa(h.ActiveCount),
+		h.Health,
 	}
 	return []byte(strings.Join(parts, "\n"))
 }

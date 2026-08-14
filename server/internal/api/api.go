@@ -63,6 +63,9 @@ type Server struct {
 
 	mu     sync.Mutex
 	active *alert.Alert // current alerts/active snapshot (nil = none)
+	// lastPublishErr is the most recent broker publish outcome, surfaced by
+	// selfCheck() in the next heartbeat. Empty = the last publish succeeded.
+	lastPublishErr string
 
 	presenceMu sync.Mutex
 	presence   map[string]Presence // deviceId -> last presence (from status/#)
@@ -414,11 +417,51 @@ func (s *Server) RunSweeper(ctx context.Context) {
 	}
 }
 
+// selfCheck is the server's verdict on its own health, carried in every signed
+// heartbeat (SPEC-SAFETY §3.1). Without it the beat was unconditionally green, so
+// a half-broken server kept telling clients everything was fine — the exact
+// failure mode fail-loud exists to prevent.
+//
+// What each dependency means for alert flow:
+//   - store unreachable: alerts still sign and publish (PublishAlert only LOGS a
+//     save failure), but history, delivery and auth are broken -> DEGRADED, not dead.
+//   - broker unreachable: the beat itself cannot be published, so the client
+//     watchdog fires on its own. We still report it on the next beat, in case the
+//     failure was transient and only some publishes were lost.
+//
+// It deliberately never stops the beat: reporting "I am degraded" is strictly more
+// informative than going silent, and silence is already covered by the watchdog.
+func (s *Server) selfCheck() (health string, reason string) {
+	if err := s.Store.Ping(); err != nil {
+		return alert.HealthDegraded, "store unreachable: " + err.Error()
+	}
+	s.mu.Lock()
+	lastErr := s.lastPublishErr
+	s.mu.Unlock()
+	if lastErr != "" {
+		return alert.HealthDegraded, "last broker publish failed: " + lastErr
+	}
+	return alert.HealthOK, ""
+}
+
+// notePublishResult records whether the most recent broker publish worked, so the
+// next heartbeat can report a broker that is failing under us.
+func (s *Server) notePublishResult(err error) {
+	s.mu.Lock()
+	if err != nil {
+		s.lastPublishErr = err.Error()
+	} else {
+		s.lastPublishErr = ""
+	}
+	s.mu.Unlock()
+}
+
 // RunHeartbeat publishes the signed FAIL-LOUD liveness beacon every
 // HeartbeatInterval seconds (SPEC-SAFETY §3.1). Clients run a local watchdog and
 // alarm if it stops — silence must never be mistaken for "no alerts".
 func (s *Server) RunHeartbeat(ctx context.Context) {
 	var seq int64
+	var lastReason string
 	beat := func() {
 		seq++
 		s.mu.Lock()
@@ -427,6 +470,15 @@ func (s *Server) RunHeartbeat(ctx context.Context) {
 			active = 1
 		}
 		s.mu.Unlock()
+		health, reason := s.selfCheck()
+		if reason != lastReason {
+			if reason != "" {
+				log.Printf("heartbeat: reporting DEGRADED — %s", reason)
+			} else {
+				log.Printf("heartbeat: recovered, reporting ok")
+			}
+			lastReason = reason
+		}
 		hb := &alert.Heartbeat{
 			SchemaVersion: alert.SchemaVersion,
 			Type:          "heartbeat",
@@ -434,13 +486,16 @@ func (s *Server) RunHeartbeat(ctx context.Context) {
 			IssuedAt:      time.Now().Unix(),
 			Interval:      HeartbeatInterval,
 			ActiveCount:   active,
+			Health:        health,
 		}
 		alert.SignHeartbeat(hb, s.Priv)
 		payload, _ := json.Marshal(hb)
-		if err := s.Broker.Publish(TopicHeartbeat, payload, true, 1); err != nil {
+		err := s.Broker.Publish(TopicHeartbeat, payload, true, 1)
+		if err != nil {
 			log.Printf("heartbeat publish: %v", err)
 		}
-		metrics.Heartbeats.Inc()
+		s.notePublishResult(err)
+		metrics.Heartbeats.WithLabelValues(health).Inc()
 	}
 	beat() // emit one immediately so a just-connected client gets a retained beat
 	t := time.NewTicker(time.Duration(HeartbeatInterval) * time.Second)

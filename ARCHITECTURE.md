@@ -179,7 +179,7 @@ migrations/  web-admin/  web-client/  clients/  deploy/{compose,helm,kustomize} 
 | SCIM 2.0 | 🔴 | 无 `internal/scim`；"离职即时下线"目前只能手工 |
 | 审计日志 | 🔴 | 无 `audit_event` 表、无哈希链、无 SIEM 导出——SOC2/ISO 买家必查项 |
 | 规模 / HA | 🔴 | 无 EMQX 可插拔 `Bus`、无 advisory-lock leader 选举；仍是内嵌 mochi 单进程 |
-| 外部看门狗（off-cluster）| 🔴 | §6 要求的 dead-man's-switch（healthchecks.io / Cloudflare Worker）完全缺失；且 `RunHeartbeat` **恒发 "green"**，不查 broker/store 自身健康——服务端这半边的 fail-loud 尚未闭合 |
+| 外部看门狗（off-cluster）| 🔴 | §6 要求的 dead-man's-switch（healthchecks.io / Cloudflare Worker）完全缺失。服务端这半边的 fail-loud **已闭合**（心跳携带签名 `health`，查 `Store.Ping()` + 上次 broker 发布结果），但看门狗不能与被看者共命运——进程整体死亡仍无人能看见 |
 | 原生端 | 🔴 | Android / Tauri 桌面 / iOS 均未开始；Admin SPA 的 `/devices`、`/history`、`/sources` 仍是 "Coming soon" 占位 |
 
 两条刻意的设计取舍，记在这里免得被当成 bug：
@@ -202,7 +202,7 @@ migrations/  web-admin/  web-client/  clients/  deploy/{compose,helm,kustomize} 
 **下一步（按"欠得最贵的债先还"排）**：
 1. **设备面多租户**——给 `device` 加 `org_id` + provisioning，并把 `alerts/active` / `alerts/events` 拆成按 org 的主题。这是唯一还在打脸"多租户"承诺的结构性缺口，而且已上线设备越多、迁移越贵。
 2. **审计日志**（E0 遗留）——SOC2/ISO 评估的硬门槛；append-only + 哈希链的性质决定了它**不能事后补写历史**，越晚做覆盖面越残缺。
-3. **让心跳讲真话 + 外部看门狗**——`RunHeartbeat` 目前恒发 `"green"`，先接上 broker/store 自身健康，再加 off-cluster dead-man's-switch（SPEC-SAFETY P0-B）。看门狗不能与被看者共命运，因此 P0 现在**不算完成**。
+3. **外部看门狗**——心跳讲真话这半步已完成（`health` 字段查 `Store.Ping()` + 上次 broker 发布结果）；仍需 off-cluster dead-man's-switch（SPEC-SAFETY P0-B）。看门狗不能与被看者共命运，因此 P0 现在**仍不算完成**。
 4. **每租户 SSO**（E1 收尾）+ **SCIM**（E2）——大客户 table-stakes，且两者都要改 §7a 的单 ACS/redirect 路由假设，宜一起做。
 
 ---

@@ -2,10 +2,12 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -421,4 +423,85 @@ func TestDevices_Auth(t *testing.T) {
 
 func itoa(n int64) string {
 	return strconv.FormatInt(n, 10)
+}
+
+// --- P0 fail-loud: the server's self-check ---------------------------------
+
+// TestSelfCheck_OKWhenHealthy is the baseline: a fully wired server reports ok.
+func TestSelfCheck_OKWhenHealthy(t *testing.T) {
+	ts := newTestServer(t)
+	health, reason := ts.srv.selfCheck()
+	if health != alert.HealthOK || reason != "" {
+		t.Fatalf("healthy server reported %q (%s), want ok", health, reason)
+	}
+}
+
+// TestSelfCheck_DegradedWhenStoreDown is the whole point of the feature: before
+// it existed the beat was unconditionally green, so a server whose database had
+// gone away still told every client it was fine.
+func TestSelfCheck_DegradedWhenStoreDown(t *testing.T) {
+	ts := newTestServer(t)
+	if err := ts.srv.Store.Close(); err != nil { // simulate the DB going away
+		t.Fatalf("close store: %v", err)
+	}
+	health, reason := ts.srv.selfCheck()
+	if health != alert.HealthDegraded {
+		t.Fatalf("store is down but self-check said %q — the beat would lie", health)
+	}
+	if reason == "" {
+		t.Error("a degraded verdict must carry a reason for the server log")
+	}
+}
+
+// TestSelfCheck_DegradedAfterPublishFailure covers the broker half: a failed
+// publish is remembered and surfaced on the next beat.
+func TestSelfCheck_DegradedAfterPublishFailure(t *testing.T) {
+	ts := newTestServer(t)
+	ts.srv.notePublishResult(errors.New("broker gone"))
+	health, reason := ts.srv.selfCheck()
+	if health != alert.HealthDegraded || !strings.Contains(reason, "broker gone") {
+		t.Fatalf("after a publish failure: %q (%s), want degraded carrying the cause", health, reason)
+	}
+	// …and it clears once publishing works again.
+	ts.srv.notePublishResult(nil)
+	if health, _ := ts.srv.selfCheck(); health != alert.HealthOK {
+		t.Fatalf("recovered server still reports %q", health)
+	}
+}
+
+// TestRunHeartbeat_PublishesSignedBeatWithHealth drives the real loop for one
+// beat and checks what actually lands on the broker topic.
+func TestRunHeartbeat_PublishesSignedBeatWithHealth(t *testing.T) {
+	ts := newTestServer(t)
+	got := make(chan []byte, 4)
+	if err := ts.srv.Broker.Subscribe(TopicHeartbeat, func(_ string, payload []byte) {
+		select {
+		case got <- payload:
+		default:
+		}
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go ts.srv.RunHeartbeat(ctx) // emits one beat immediately
+
+	select {
+	case payload := <-got:
+		var hb alert.Heartbeat
+		if err := json.Unmarshal(payload, &hb); err != nil {
+			t.Fatalf("decode heartbeat: %v", err)
+		}
+		if hb.Health != alert.HealthOK {
+			t.Errorf("health = %q, want ok", hb.Health)
+		}
+		if hb.Interval != HeartbeatInterval || hb.Seq != 1 {
+			t.Errorf("unexpected beat: %+v", hb)
+		}
+		if !alert.VerifyHeartbeat(&hb, ts.pub) {
+			t.Error("published heartbeat does not verify against the server public key")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no heartbeat published within 5s")
+	}
 }

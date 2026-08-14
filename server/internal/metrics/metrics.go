@@ -26,10 +26,12 @@ var (
 		Help: "Admin logins, by method (password|passkey|2fa) and result.",
 	}, []string{"method", "result"})
 
-	Heartbeats = promauto.NewCounter(prometheus.CounterOpts{
+	// Labelled by the server's self-reported health so a degraded run is visible
+	// in Prometheus, not just to the browser clients watching the beat.
+	Heartbeats = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "alerthub_heartbeats_total",
-		Help: "FAIL-LOUD heartbeats published.",
-	})
+		Help: "FAIL-LOUD heartbeats published, by self-reported health.",
+	}, []string{"health"})
 
 	// Durable delivery pipeline (transactional outbox + worker).
 	DeliveryEnqueued = promauto.NewCounterVec(prometheus.CounterOpts{

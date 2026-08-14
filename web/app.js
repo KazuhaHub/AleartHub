@@ -18,6 +18,7 @@ const cancelledSet = new Set(); // ids recalled by a cancel (suppress late arriv
 // --- FAIL-LOUD heartbeat watchdog state (SPEC-SAFETY §3.1/§3.2) ---
 let hbInterval = 10;            // seconds, learned from the heartbeat
 let lastBeatMs = 0;            // local wall-clock of last GOOD heartbeat
+let serverDegraded = false;    // server's own signed health verdict (SPEC-SAFETY §3.1)
 let lastSeq = -1;
 let healthyStreak = 0;         // consecutive good beats (flap damping)
 let driftStreak = 0;          // consecutive beats with large clock drift
@@ -166,6 +167,12 @@ async function handleHeartbeat(buf) {
   if (hb.interval > 0) hbInterval = hb.interval;
   lastSeq = hb.seq;
 
+  // The beat arriving proves the link is alive; `health` is the server's verdict
+  // on ITSELF. A degraded server still beats (going silent would tell us less),
+  // so this is a separate signal from the watchdog's connection states.
+  serverDegraded = hb.health && hb.health !== "ok";
+  applyServerHealth();
+
   // clock-drift check: the signed issued_at is the trusted time reference.
   const drift = Math.floor(Date.now() / 1000) - hb.issued_at;
   if (Math.abs(drift) > 30) {
@@ -201,6 +208,22 @@ function evalLiveness() {
     setFailState("ok");
   }
 }
+// applyServerHealth shows the server's self-reported degradation. It only paints
+// while the connection is otherwise healthy — a dead link is the louder problem
+// and setFailState owns the banner in that case.
+function applyServerHealth() {
+  if (failState !== "ok") return;
+  const el = $("#failloud");
+  if (serverDegraded) {
+    el.hidden = false;
+    el.className = "degraded";
+    el.textContent = "⚠ 服务端自报降级 — 告警仍在发送，但部分功能（历史/投递）可能不可用";
+  } else {
+    el.hidden = true;
+    el.className = "";
+  }
+}
+
 function setFailState(s) {
   if (s === failState) return;
   failState = s;
@@ -212,6 +235,7 @@ function setFailState(s) {
     dot.className = "dot on";
     $("#conn-text").textContent = "已连接 · 心跳正常";
     stopOfflineChime();
+    applyServerHealth(); // the link is back; the server may still self-report degraded
   } else if (s === "degraded") {
     el.hidden = false;
     el.className = "degraded";

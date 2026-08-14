@@ -78,15 +78,23 @@ CAP API(他程序CALL) ─┼→ Go ──┤
 
 ### 3.1 A 层：客户端本地看门狗 + 签名心跳
 
-> 状态：✅ 已实现。服务端 10s 签名心跳（`hb1` 域标签）+ web 客户端本地定时器分级（OK / DEGRADED ~30s / OFFLINE ~60s）+ 恢复需连续 ≥2 拍的抖动抑制，均与本节一致。
+> 状态：✅ 已实现。服务端 10s 签名心跳（`hb2` 域标签）+ web 客户端本地定时器分级（OK / DEGRADED ~30s / OFFLINE ~60s）+ 恢复需连续 ≥2 拍的抖动抑制，均与本节一致。心跳现在还携带**服务端对自己的健康判定**（见下），跨语言一致性由 conformance 守护（含「篡改 `health` 必须验签失败」）。
 
 服务端每 **10s** 向 `system/heartbeat`（retained, QoS1）发**签名**心跳（签名防 LAN 上被攻陷设备伪造"一切健康"来压掉离线报警）。
 
-心跳信封（域分隔标签 `hb1`，与 alert 的 canonical 隔离，防签名跨用）：
+心跳信封（域分隔标签 `hb2`，与 alert 的 canonical 隔离，防签名跨用）：
 ```json
-{ "schema_version":1, "type":"heartbeat", "seq":184213, "issued_at":1749859200, "interval":10, "active_count":0, "sig":"base64url(ed25519)" }
+{ "schema_version":1, "type":"heartbeat", "seq":184213, "issued_at":1749859200, "interval":10, "active_count":0, "health":"ok", "sig":"base64url(ed25519)" }
 ```
-canonical（Go 与 verify.js 必须逐字节一致）：`"hb1" \n seq \n issued_at \n interval \n active_count`
+canonical（Go 与 verify.js 必须逐字节一致）：`"hb2" \n seq \n issued_at \n interval \n active_count \n health`
+
+**`health`：服务端对自身的判定**（`ok` | `degraded`）。在它出现之前心跳是**恒绿**的——存储挂掉的服务端照样告诉每个客户端「一切正常」，这恰恰是 fail-loud 要防的失效模式。它**被签名覆盖**，所以被攻陷的 LAN 设备无法把 `degraded` 改回 `ok` 来消音（有专门的测试守这条）。
+- 判定依据：`Store.Ping()` 失败 → `degraded`；上一次 broker 发布失败 → `degraded`。
+- **降级不停拍**：继续发「我降级了」比沉默信息量更大，而沉默本来就由客户端看门狗兜底。
+- 客户端把它渲染成**独立于连接状态**的琥珀横幅（链路正常但服务端自称有病），连接真正断掉时仍由看门狗的 OFFLINE 接管。
+- 域标签由 `hb1` 升到 `hb2`：签名字段集变了，旧 5 字段与新 6 字段**必须不能交叉验签**。
+
+> ⚠️ **自检的诚实边界**：`Ping()` 探的是「连接是否可用」。Postgres 档它是真往返（已用停库演练验证：心跳转 `degraded`、`/readyz` 转 503、恢复后自动转回）。**SQLite 档它探不到「数据库文件被删」**——POSIX 语义下已打开的文件句柄依然有效，`Ping()` 照常成功。
 
 **客户端本地定时器**（不靠收消息驱动——这是关键，半开 socket 不会触发 onMessage）按距上次有效心跳的时长分级：
 | 距上次心跳 | 状态 | 行为 |
@@ -105,7 +113,7 @@ canonical（Go 与 verify.js 必须逐字节一致）：`"hb1" \n seq \n issued_
 
 ### 3.3 B 层：外部看门狗（检测"整个家黑了"）
 
-> 状态：❌ **未实现**——healthchecks.io ping 与 Cloudflare Worker 都没有接。`/healthz`、`/readyz` 已就绪，接入点是备好的，但**没有任何外部实体在轮询**：“整个家黑了”这类故障目前无人能看见。本节末句“服务端 ping 条件于内部健康”同样未落地——`RunHeartbeat` 不查 broker/store，心跳恒为绿。
+> 状态：❌ **未实现**——healthchecks.io ping 与 Cloudflare Worker 都没有接。`/healthz`、`/readyz` 已就绪，接入点是备好的，但**没有任何外部实体在轮询**：“整个家黑了”这类故障目前无人能看见。（本节末句“服务端 ping 条件于内部健康”已落地：`RunHeartbeat` 现在查 `Store.Ping()` 与上次 broker 发布结果，见 §3.1；缺的纯粹是**外部**那一方。）
 **反相逻辑**：家死了发不出消息 → 看门狗**在"该来的 ping 没来"时**触发（dead-man's switch）。
 - **主**：[healthchecks.io](https://healthchecks.io)（免费层 20 checks）。家服务端每 **60s** ping `hc-ping.com/<uuid>`；period=1min, grace=5min；Down 时 fan-out ntfy(自托管+ntfy.sh) + 邮件。服务端 ping **条件于内部健康**（broker/DB 不健康则主动打 `/fail`）。
 - **备**（不同厂商，去单点）：Cloudflare Worker cron 每 1min 拉取 `/healthz`，失败 POST ntfy.sh。
@@ -268,7 +276,7 @@ certainty=Unlikely 或 status≠Actual              → 降级/仅演练
 | 阶段 | 内容 | 状态 | 实际缺口 |
 |---|---|---|---|
 | MVP | 内嵌 broker + Ed25519 签名 + web 客户端/面板 + 全屏 | ✅ 已完成 | 协议核心已过跨语言一致性测试（Go 签名 ↔ `web/verify.js` 验签，篡改必拒）|
-| **P0** | fail-loud 心跳 + ntfy 扇出（自托管 + ntfy.sh）| 🟡 **部分完成** | **A 层已完整**（§3.1 / §3.2）：10s 签名心跳、客户端 30s/60s 分级看门狗、抖动抑制、时钟漂移横幅；ntfy 双通道（§4）已跑通。**缺 B 层**：§3.3 外部看门狗完全没有 → “整个家黑了”目前**无人能看见**；且 `RunHeartbeat` 不查 broker/store 健康，心跳**恒为绿**，服务端自检的半环没闭上。**这两件补齐前，P0 不得记为完成。** |
+| **P0** | fail-loud 心跳 + ntfy 扇出（自托管 + ntfy.sh）| 🟡 **部分完成** | **A 层已完整**（§3.1 / §3.2）：10s 签名心跳、客户端 30s/60s 分级看门狗、抖动抑制、时钟漂移横幅；ntfy 双通道（§4）已跑通。**服务端自检已闭环**：心跳携带签名的 `health`，`Store.Ping()` 失败或上次 broker 发布失败即自报 `degraded`，客户端渲染独立横幅（已用停 Postgres 的真实演练端到端验证；注意 SQLite 档探不到「文件被删」，见 §3.1）。**仍缺 B 层**：§3.3 外部看门狗完全没有 → “整个家黑了”目前**无人能看见**。**这一件补齐前，P0 不得记为完成。** |
 | P1 | CAP 1.2 ingest API + 出向 CAP；场景模板 | 🟡 部分完成 | 已做：CAP 1.2 解析、三元（severity/urgency/certainty）折叠、`Exercise/Test/System` 强制降为演练、`responseType→action`、**Cancel**（确定性 id + `<references>` → `CancelByID`，无映射表）。缺：`msgType=Update` 的 supersede 语义；`<area>`/geocode（JIS 市町村码）定向——**当前所有 CAP 警报都是全员**；出向 emit CAP；§6.3 场景模板。|
 | P2 | 日本 EEW 双源 WS（Wolfx + P2PQuake）+ renew 去重 | 🟡 部分完成 | 已做：Wolfx WS，按 `EventID` 去重，默认关闭（`ALERTHUB_EEW=wolfx` 开启）。缺：**P2PQuake 第二源 → §6.1 的双源冗余要求未满足**，EEW 目前是单点；`Serial` renew 与严重度升级（予報→警報 / 震度提级）未实现，同一 EventID 只发一次。|
 | P3 | 确认送达升级状态机 + 名册视图 + 每周演练 cron | ❌ 未开始 | §5 与 §3.4 整节仍是设计。客户端发得出 ack、broker ACL 也放行，但服务端不订阅、不统计；T1/T2/T3、`alerts/<id>/escalation/<deviceId>`、`reissued_at`/`escalation_phase`/`requires_ack`、三色名册、演练 cron 均无。|
@@ -305,7 +313,7 @@ certainty=Unlikely 或 status≠Actual              → 降级/仅演练
 2. **ntfy iOS 不真独立**（过 ntfy.sh + APNs），且受 iOS 26.2 无声 bug 影响——依赖前查 release notes。
 3. **Time-Sensitive 唤不醒静音 iPhone**，确定无疑。
 4. **外部看门狗尚未部署**（§3.3 / P4 未做）——所以“整个家黑了 / 服务器死了”这件事，**当前的外部检测能力为零**。设备自己仍会因收不到心跳而本地报 OFFLINE（A 层还在），但家以外没有任何东西会通知你。即便日后建成，分辨率也只有 ~5min：够“系统下线、改听官方”，不够当主地震警报。
-5. **服务端心跳恒为绿**：`RunHeartbeat` 只按固定节拍发心跳，不查 broker/store 健康——“进程还活着但数据库挂了”这类故障，A 层看门狗看不见（心跳照常来）。`/readyz` 会掉，但目前没人在轮询它（见上一条）。
+5. **服务端自检有边界**：心跳现在携带签名的 `health`，`Store.Ping()` 失败即自报 `degraded`（已用停 Postgres 演练验证）。但 `Ping()` 只探「连接可用性」：**SQLite 档探不到数据库文件被删**（POSIX 下已打开的句柄仍有效），也探不到磁盘写满、数据损坏这类故障。它能覆盖的是「连接断了」这一类。
 6. **EEW 目前单源**（仅 Wolfx，且默认关闭）——§6.1 的双源冗余未生效；Wolfx 是免费“無保証”第三方中继，大震时最易被打爆。手机务必保持**緊急速報メール 开启**。
 7. **确认送达 / 升级未实现**：确认的语义本就是“设备 ack”而非“人知晓”；而**当前服务端根本不收集 ack**（客户端只用它门控本地消除）——“谁没确认”无人统计，也不会有任何升级。
 8. **没有定时演练**（§3.4 未实现）——“在出事前证明它还活着”目前只能手动灌一条 CAP `status=Exercise` 来做。

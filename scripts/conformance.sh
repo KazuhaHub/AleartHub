@@ -23,4 +23,9 @@ for _ in $(seq 1 60); do
   sleep 0.2
 done
 
+# Sign a heartbeat with the same key the running server uses, so the JS side can
+# check the heartbeat canonical form too (see conformance.mjs).
+ALERTHUB_HB_JSON="$(go run ./server/cmd/hbgen)"
+export ALERTHUB_HB_JSON
+
 node scripts/conformance.mjs

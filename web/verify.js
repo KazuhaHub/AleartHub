@@ -77,7 +77,17 @@ export async function verifyAlert(a, pubRaw) {
 // --- Heartbeat verify (SPEC-SAFETY §3.1) -----------------------------------
 // MUST match server CanonicalHeartbeat(): domain tag "hb1" + 4 fields, '\n'-joined.
 export function canonicalHeartbeatBytes(h) {
-  const parts = ["hb1", String(h.seq), String(h.issued_at), String(h.interval), String(h.active_count)];
+  // Domain tag "hb2": bumped from hb1 when `health` joined the signed set, so an
+  // old 5-field beat can never cross-verify against a new 6-field one.
+  // MUST stay byte-identical with Go's alert.CanonicalHeartbeat.
+  const parts = [
+    "hb2",
+    String(h.seq),
+    String(h.issued_at),
+    String(h.interval),
+    String(h.active_count),
+    String(h.health ?? ""),
+  ];
   return enc.encode(parts.join("\n"));
 }
 

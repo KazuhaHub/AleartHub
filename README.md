@@ -167,7 +167,7 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | MVP | 内嵌 broker + Ed25519 签名 + web 客户端/面板 + 全屏接管 | ✅ 完成（跨语言一致性测试通过） |
-| **P0** | fail-loud 心跳 + ntfy 独立通道 | ⚠️ **部分**：A 层签名心跳（10s）、浏览器看门狗（30s degraded / 60s offline）、时钟漂移横幅、ntfy 自托管 + ntfy.sh 扇出均已完成；但 `RunHeartbeat` **恒发 green**、不查 broker/store 自身健康，服务端自检这一半未闭环 |
+| **P0** | fail-loud 心跳 + ntfy 独立通道 | ⚠️ **部分**：A 层签名心跳（10s）、浏览器看门狗（30s degraded / 60s offline）、时钟漂移横幅、ntfy 自托管 + ntfy.sh 扇出均已完成；服务端自检**已闭环**（心跳带签名 `health`，存储或 broker 故障即自报降级，客户端显示独立横幅）。**仍缺外部 dead-man switch**（P0-B / P4），进程整体死亡时无人能看见 |
 | P1 | CAP 1.2 ingest + 场景模板 | ⚠️ **部分**：CAP 1.2 XML ingest 与 CAP Cancel 已完成（确定性 id `cap.AlertID(sender,identifier)` 让 `<references>` 精确召回）；**Update-as-supersede、`<area>`/geocode 定向未做**；出向 CAP、场景模板未做 |
 | P2 | 日本 EEW 双源 + renew 去重 | ⚠️ **部分**：Wolfx 单源已接（按 EventID 去重，默认关闭）；**P2PQuake 第二源未接，renew/serial 升级未做**——SPEC-SAFETY §6.1 要求的双源尚未满足 |
 | P3 | 确认送达升级状态机 + 名册视图 + 每周演练 cron | ❌ 未开始 |
