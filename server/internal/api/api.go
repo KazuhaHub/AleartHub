@@ -136,6 +136,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/admin/service-accounts/delete", s.requirePerm(auth.PermSAManage, s.handleServiceAccountDelete))
 	// Alert ops (RBAC; static admin token still works for scripts).
 	mux.HandleFunc("/api/publish", s.requirePerm(auth.PermAlertPublish, s.handlePublish))
+	// One-tap scenario templates (SPEC-SAFETY §6.3): server-owned so every client
+	// offers identical wording.
+	mux.HandleFunc("/api/scenarios", s.requirePerm(auth.PermAlertRead, s.handleScenarios))
+	mux.HandleFunc("/api/publish/scenario", s.requirePerm(auth.PermAlertPublish, s.handlePublishScenario))
 	mux.HandleFunc("/api/cancel", s.requirePerm(auth.PermAlertCancel, s.handleCancel))
 	mux.HandleFunc("/api/history", s.requirePerm(auth.PermAlertRead, s.handleHistory))
 	mux.HandleFunc("/api/devices", s.requirePerm(auth.PermDeviceRead, s.handleDevices))

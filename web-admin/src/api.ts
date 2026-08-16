@@ -127,6 +127,15 @@ export type Device = { device_id: string; state: string; at: number; client: str
 
 export type OrgInfo = { id: number; slug: string; name: string };
 
+// Scenario templates are served by the API rather than defined here on purpose:
+// every client must offer identical wording (SPEC-SAFETY §6.3).
+export type Scenario = {
+  id: string; label: string; icon: string;
+  severity: Severity; category: Category;
+  title: string; body: string; action: string;
+  response_type: string; ttl: number;
+};
+
 export type AuditEntry = {
   id: number; org_id: number; at: number;
   actor_type: "user" | "service_account" | "admin_token" | "system";
@@ -152,6 +161,9 @@ export const api = {
   publish: (r: PublishReq) => http.post<Alert>("/api/publish", r).then((x) => x.data),
   cancel: (id: string) => http.post("/api/cancel", { id }).then((x) => x.data),
   history: () => http.get<Alert[]>("/api/history").then((x) => x.data ?? []),
+  scenarios: () => http.get<Scenario[]>("/api/scenarios").then((x) => x.data ?? []),
+  publishScenario: (id: string, note?: string) =>
+    http.post<Alert>("/api/publish/scenario", { id, note }).then((x) => x.data),
   devices: () => http.get<Device[]>("/api/devices").then((x) => x.data ?? []),
   sources: () => http.get<{ sources: SourceInfo[] }>("/api/sources").then((x) => x.data?.sources ?? []),
   audit: (limit = 200) => http.get<AuditEntry[]>(`/api/audit?limit=${limit}`).then((x) => x.data ?? []),

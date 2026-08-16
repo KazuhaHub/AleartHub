@@ -1,23 +1,20 @@
 import { useEffect, useState } from "react";
 import {
-  App as AntApp, Button, Card, Col, Flex, Form, Input, List, Row, Select, Tag, Typography,
+  App as AntApp, Button, Card, Col, Flex, Form, Input, List, Popconfirm, Row, Select,
+  Space, Tag, Typography,
 } from "antd";
 import { SendOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import PageHeader from "@/components/PageHeader";
-import { api, type Alert, type Category, type PublishReq, type Severity } from "@/api";
+import { api, type Alert, type Category, type PublishReq, type Scenario, type Severity } from "@/api";
 
 const SEVERITIES: Severity[] = ["notice", "warning", "critical", "emergency"];
 const CATEGORIES: Category[] = ["earthquake", "fire", "weather", "system", "security", "custom"];
 
-// Scenario templates (Alertus borrow): one tap fills the form.
-const SCENARIOS: { label: string; v: PublishReq }[] = [
-  { label: "🌐 地震 emergency", v: { severity: "emergency", category: "earthquake", title: "正在发生地震", body: "震中距你约 42 公里，预计 15 秒后到达。", action: "趴下，掩护，抓牢" } },
-  { label: "🔥 火灾 emergency", v: { severity: "emergency", category: "fire", title: "检测到火警", body: "厨房烟感触发，请立即确认。", action: "立即撤离，不要乘电梯" } },
-  { label: "🚪 全家撤离", v: { severity: "critical", category: "custom", title: "全家立即撤离", body: "请按预案到集合点。", action: "保持冷静，迅速撤离" } },
-  { label: "🖥 节点失联 critical", v: { severity: "critical", category: "system", title: "节点失联：pve-01", body: "心跳超时 90 秒。", action: "确认并检查节点" } },
-  { label: "🔒 异地登录 notice", v: { severity: "notice", category: "security", title: "异地登录", body: "来自 Osaka 的新登录。", action: "核实并确认" } },
-];
+// Scenario templates come from the SERVER (SPEC-SAFETY §6.3). They used to be
+// hardcoded here, which meant the panel could drift from any other client — and
+// in an emergency people act from muscle memory, so a button that says something
+// different on the phone than on the wall tablet is worse than no button.
 
 // antd status colours track the theme tokens (colorInfo / colorWarning / colorError),
 // so this keeps the MUI Chip colour semantics under the M3 palette.
@@ -36,8 +33,27 @@ export default function PublishView() {
   });
   const [ttl, setTtl] = useState("");
   const [history, setHistory] = useState<Alert[]>([]);
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [firing, setFiring] = useState<string | null>(null);
 
   const load = () => api.history().then(setHistory).catch(() => {});
+
+  useEffect(() => { api.scenarios().then(setScenarios).catch(() => {}); }, []);
+
+  // A scenario fires through its own endpoint so the wording stays server-owned;
+  // it is confirmed first because these are the loudest messages the system sends.
+  const fireScenario = async (sc: Scenario) => {
+    setFiring(sc.id);
+    try {
+      await api.publishScenario(sc.id);
+      message.success(t("publish.sent"));
+      load();
+    } catch {
+      message.error(t("publish.failed"));
+    } finally {
+      setFiring(null);
+    }
+  };
   useEffect(() => { load(); }, []);
 
   const set = (k: keyof PublishReq, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -66,16 +82,42 @@ export default function PublishView() {
       <Row gutter={[16, 16]} align="top">
         <Col xs={24} md={14}>
           <Card>
+            {/* Two actions per scenario, deliberately distinct: the chip PREFILLS
+                the form for review, the send button FIRES the server-owned
+                wording immediately. Prefilling and firing must never be the same
+                click — one is a draft, the other is an emergency broadcast. */}
             <Flex wrap gap={8} style={{ marginBottom: 16 }}>
-              {SCENARIOS.map((s) => (
-                <Tag
-                  key={s.label}
-                  variant="outlined"
-                  style={{ cursor: "pointer", userSelect: "none", marginInlineEnd: 0 }}
-                  onClick={() => { setForm(s.v); setTtl(""); }}
-                >
-                  {s.label}
-                </Tag>
+              {scenarios.map((sc) => (
+                <Space.Compact key={sc.id}>
+                  <Tag
+                    variant="outlined"
+                    style={{ cursor: "pointer", userSelect: "none", marginInlineEnd: 0 }}
+                    onClick={() => {
+                      setForm({
+                        severity: sc.severity, category: sc.category,
+                        title: sc.title, body: sc.body, action: sc.action,
+                      });
+                      setTtl("");
+                    }}
+                  >
+                    {sc.icon} {sc.label}
+                  </Tag>
+                  <Popconfirm
+                    title={t("publish.confirmScenario", { label: sc.label })}
+                    okText={t("common.confirm")}
+                    cancelText={t("common.cancel")}
+                    onConfirm={() => fireScenario(sc)}
+                  >
+                    <Button
+                      size="small"
+                      type="text"
+                      danger={sc.severity === "emergency" || sc.severity === "critical"}
+                      icon={<SendOutlined />}
+                      loading={firing === sc.id}
+                      aria-label={t("publish.fireScenario", { label: sc.label })}
+                    />
+                  </Popconfirm>
+                </Space.Compact>
               ))}
             </Flex>
             {/* component="div": renders no <form> element, so Enter can't submit/reload (matches the old MUI markup). */}

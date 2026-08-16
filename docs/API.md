@@ -312,6 +312,13 @@
 | `GET /api/orgs` | 会话 | 超级管理员看到全部组织，其他用户只看到自己有成员关系的组织。 |
 | `POST /api/orgs` | 会话（**仅超级管理员**） | 创建组织。**仅当调用方是会话用户时**创建者才自动获得 `owner` 成员身份；用静态 admin token 调用不会写入成员行（无 JWT claims 可归属）。 |
 
+### 场景模板（一键发送）
+
+| 方法 路径 | 鉴权 | 说明 |
+|---|---|---|
+| `GET /api/scenarios` | perm `alert:read` | 服务端持有的五个场景：`evacuate` / `shelter` / `lockdown` / `dropcover` / `allclear`，各含 severity/category/措辞/CAP `response_type`/TTL。**由服务端下发**，保证各客户端措辞一致。 |
+| `POST /api/publish/scenario` | perm `alert:publish` | body `{id, note?}`。按模板发送；`note` 会**追加**到正文,但**不能覆盖** `action`（指令由服务端固定）。`source` 记为 `scenario:<id>`，审计可追溯是哪个模板。未知 id → 404。 |
+
 ### 出向 CAP（把我们的告警发布为 CAP 1.2）
 
 | 方法 路径 | 鉴权 | 说明 |
