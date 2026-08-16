@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/kazuha/alerthub/server/internal/store"
 )
@@ -162,4 +165,117 @@ func TestExport_PaginatesLargeBacklog(t *testing.T) {
 	if batches.Load() < 3 {
 		t.Fatalf("expected the backlog to be paginated, got %d batch(es)", batches.Load())
 	}
+}
+
+// --- syslog transport --------------------------------------------------------
+
+// TestSyslog_ShipsRFC5424ToUDP drives the real socket path: a collector must be
+// able to parse what we send without a shim.
+func TestSyslog_ShipsRFC5424ToUDP(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer pc.Close()
+
+	st := newStore(t)
+	_ = st.AppendAudit(&store.AuditEntry{
+		OrgID: 1, Action: "alert.publish", ActorType: store.ActorUser,
+		ActorName: "alice", TargetID: "a-1", IP: "10.0.0.5",
+	})
+
+	e := New(st, Config{URL: "syslog+udp://" + pc.LocalAddr().String(), Batch: 10})
+	if !e.Enabled() {
+		t.Fatal("syslog exporter should be enabled")
+	}
+	if err := e.ExportOnce(context.Background()); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	buf := make([]byte, 8192)
+	_ = pc.SetReadDeadline(time.Now().Add(3 * time.Second))
+	n, _, err := pc.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("nothing arrived at the collector: %v", err)
+	}
+	line := string(buf[:n])
+
+	// Facility 13 (log audit) + severity 5 (notice) = PRI 109.
+	if !strings.HasPrefix(line, "<109>1 ") {
+		t.Errorf("line does not start with a valid RFC 5424 header: %q", line[:min(40, len(line))])
+	}
+	for _, want := range []string{`action="alert.publish"`, `actor="alice"`, `ip="10.0.0.5"`, "alerthub@0"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("structured data missing %s in: %s", want, line)
+		}
+	}
+	// The full entry rides along as JSON so nothing is lost to a text-only store.
+	if !strings.Contains(line, `"hash":`) {
+		t.Error("the entry JSON (with its chain hash) should be in the message body")
+	}
+}
+
+// A failed login is worth a reviewer's attention, so it is raised above notice.
+func TestSyslog_FailuresAreWarnings(t *testing.T) {
+	pc, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer pc.Close()
+	st := newStore(t)
+	_ = st.AppendAudit(&store.AuditEntry{OrgID: 1, Action: "auth.login_failed", ActorName: "ghost"})
+
+	e := New(st, Config{URL: "syslog+udp://" + pc.LocalAddr().String(), Batch: 10})
+	_ = e.ExportOnce(context.Background())
+
+	buf := make([]byte, 4096)
+	_ = pc.SetReadDeadline(time.Now().Add(3 * time.Second))
+	n, _, err := pc.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("no datagram: %v", err)
+	}
+	// facility 13 * 8 + 4 (warning) = 108
+	if !strings.HasPrefix(string(buf[:n]), "<108>") {
+		t.Errorf("a failure should ship at warning severity, got %q", string(buf[:n])[:20])
+	}
+}
+
+// Values that would break the one-record-per-line framing, or the SD syntax, must
+// be escaped rather than emitted raw.
+func TestSyslog_EscapesStructuredData(t *testing.T) {
+	pc, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	defer pc.Close()
+	st := newStore(t)
+	_ = st.AppendAudit(&store.AuditEntry{
+		OrgID: 1, Action: "alert.publish",
+		ActorName: `bad"name]with\stuff`, TargetID: "line1\nline2",
+	})
+	e := New(st, Config{URL: "syslog+udp://" + pc.LocalAddr().String(), Batch: 10})
+	_ = e.ExportOnce(context.Background())
+
+	buf := make([]byte, 8192)
+	_ = pc.SetReadDeadline(time.Now().Add(3 * time.Second))
+	n, _, _ := pc.ReadFrom(buf)
+	line := string(buf[:n])
+
+	if strings.Count(line, "\n") != 1 {
+		t.Errorf("a newline in a field broke the record framing: %q", line)
+	}
+	if !strings.Contains(line, `\"`) || !strings.Contains(line, `\]`) {
+		t.Errorf("quote/bracket not escaped in structured data: %s", line)
+	}
+}
+
+// A malformed syslog URL must disable the exporter loudly rather than look
+// configured while shipping nothing.
+func TestSyslog_InvalidURLDisablesExporter(t *testing.T) {
+	st := newStore(t)
+	e := New(st, Config{URL: "syslog+udp://"})
+	if e.Enabled() {
+		t.Fatal("an unusable syslog URL must leave the exporter disabled, not silently broken")
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

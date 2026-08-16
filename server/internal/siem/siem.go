@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/kazuha/alerthub/server/internal/store"
@@ -28,10 +29,18 @@ type Config struct {
 	Batch    int           // max entries per POST
 }
 
+// sink is where a batch goes. Two exist: an HTTP collector and RFC 5424 syslog.
+// Both share the durable-cursor semantics above — the transport changes, the
+// at-least-once guarantee does not.
+type sink interface {
+	Ship(ctx context.Context, entries []store.AuditEntry) error
+}
+
 type Exporter struct {
 	cfg   Config
 	store *store.Store
 	http  *http.Client
+	sink  sink
 }
 
 func New(st *store.Store, cfg Config) *Exporter {
@@ -41,7 +50,26 @@ func New(st *store.Store, cfg Config) *Exporter {
 	if cfg.Batch <= 0 {
 		cfg.Batch = 200
 	}
-	return &Exporter{cfg: cfg, store: st, http: &http.Client{Timeout: 15 * time.Second}}
+	e := &Exporter{cfg: cfg, store: st, http: &http.Client{Timeout: 15 * time.Second}}
+	// The URL scheme picks the transport, so an operator switches by changing one
+	// env var rather than by learning a second one.
+	//   https://collector/…      -> HTTP POST of a JSON batch
+	//   syslog+udp://host:514    -> RFC 5424 datagrams
+	//   syslog+tcp://host:601    -> RFC 5424 over a reused stream
+	if strings.HasPrefix(cfg.URL, "syslog") {
+		sk, err := newSyslogSink(cfg.URL)
+		if err != nil {
+			// Refusing to start silently would be worse: log loudly and stay
+			// disabled rather than pretend the audit trail is being shipped.
+			slog.Error("siem syslog config invalid — exporter DISABLED", "url", cfg.URL, "err", err)
+			e.cfg.URL = ""
+			return e
+		}
+		e.sink = sk
+	} else if cfg.URL != "" {
+		e.sink = &httpSink{e: e}
+	}
+	return e
 }
 
 func (e *Exporter) Enabled() bool { return e != nil && e.cfg.URL != "" }
@@ -86,7 +114,7 @@ func (e *Exporter) exportOnce(ctx context.Context) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := e.post(ctx, batch); err != nil {
+		if err := e.sink.Ship(ctx, batch); err != nil {
 			return err // cursor stays put: the batch will be retried
 		}
 		last := batch[len(batch)-1].ID
@@ -98,6 +126,13 @@ func (e *Exporter) exportOnce(ctx context.Context) error {
 			return nil // drained
 		}
 	}
+}
+
+// httpSink POSTs a JSON batch to a collector endpoint.
+type httpSink struct{ e *Exporter }
+
+func (h *httpSink) Ship(ctx context.Context, entries []store.AuditEntry) error {
+	return h.e.post(ctx, entries)
 }
 
 func (e *Exporter) post(ctx context.Context, entries []store.AuditEntry) error {

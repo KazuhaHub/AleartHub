@@ -66,7 +66,7 @@ make ci      # 本地跑完整 CI 门禁：gofmt + vet + build + test + 跨语�
 | `ALERTHUB_KEY_DIR` | `keys` | Ed25519 密钥 / JWT secret / KEK 存放目录 |
 | `ALERTHUB_LOG_FORMAT` | `json` | 日志格式：`json`（生产，可被 SIEM 解析）或 `text`（本地开发易读）|
 | `ALERTHUB_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
-| `ALERTHUB_SIEM_URL` | （空=禁用）| 审计日志外送采集端点（POST JSON）。至少一次投递，采集端需按条目 `id` 去重 |
+| `ALERTHUB_SIEM_URL` | （空=禁用）| 审计日志外送。**由 URL scheme 选传输**：`https://…`=POST JSON；`syslog+udp://host:514` 或 `syslog+tcp://host:601`=**RFC 5424**（facility 13 `log audit`）。至少一次投递，采集端需按条目 `id` 去重 |
 | `ALERTHUB_SIEM_TOKEN` | | 采集端 bearer token |
 | `ALERTHUB_CAP_SENDER` | `alerthub` | 出向 CAP 的 `<sender>`。消费方按 (sender, identifier) 去重，**必须跨重启稳定** |
 | `ALERTHUB_DRILL` | （空=关闭）| `true` 开启每周演练（默认周日 10:00 JST）。**会发真警报**，开启是个刻意动作 |
