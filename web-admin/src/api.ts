@@ -136,6 +136,18 @@ export type Scenario = {
   response_type: string; ttl: number;
 };
 
+export type AckRoster = {
+  alert_id: string;
+  acked: { alert_id: string; device_id: string; ack_at: number; by?: string }[];
+  online: string[];
+  pending: string[];
+  ack_count: number;
+};
+export type EscalationState = {
+  alert_id: string; severity: Severity; phase: number; started_at: number;
+  pending: string[]; unreachable: string[]; done: boolean;
+};
+
 export type AuditEntry = {
   id: number; org_id: number; at: number;
   actor_type: "user" | "service_account" | "admin_token" | "system";
@@ -166,6 +178,8 @@ export const api = {
     http.post<Alert>("/api/publish/scenario", { id, note }).then((x) => x.data),
   devices: () => http.get<Device[]>("/api/devices").then((x) => x.data ?? []),
   sources: () => http.get<{ sources: SourceInfo[] }>("/api/sources").then((x) => x.data?.sources ?? []),
+  acks: (id: string) => http.get<AckRoster>(`/api/alerts/acks?id=${encodeURIComponent(id)}`).then((x) => x.data),
+  escalations: () => http.get<EscalationState[]>("/api/alerts/escalations").then((x) => x.data ?? []),
   audit: (limit = 200) => http.get<AuditEntry[]>(`/api/audit?limit=${limit}`).then((x) => x.data ?? []),
   auditVerify: () => http.get<AuditChain>("/api/audit/verify").then((x) => x.data),
   pubkey: () => http.get<{ pubkey: string; max_skew: number; ws_port: string }>("/pubkey").then((x) => x.data),

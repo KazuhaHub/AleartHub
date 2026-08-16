@@ -4,6 +4,7 @@ import { ReloadOutlined, SearchOutlined, StopOutlined } from "@ant-design/icons"
 import type { ColumnsType } from "antd/es/table";
 import { useTranslation } from "react-i18next";
 import PageHeader from "@/components/PageHeader";
+import AckRoster from "@/components/AckRoster";
 import { api, type Alert as AlertRow } from "@/api";
 
 // The server returns the 50 most recent envelopes for the ACTIVE org, newest
@@ -189,6 +190,13 @@ export default function HistoryView() {
         </Space>
         <Table<AlertRow>
           rowKey="id"
+          // The roster is per-alert and only meaningful while an alert is live,
+          // so it expands from the row rather than taking a page of its own.
+          expandable={{
+            rowExpandable: (a) =>
+              a.type === "alert" && (a.severity === "critical" || a.severity === "emergency"),
+            expandedRowRender: (a) => <AckRoster alertId={a.id} severity={a.severity} />,
+          }}
           size="middle"
           loading={loading}
           columns={columns}
