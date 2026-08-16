@@ -26,6 +26,13 @@ var (
 		Help: "Admin logins, by method (password|passkey|2fa) and result.",
 	}, []string{"method", "result"})
 
+	// Escalations are the count of times an alert went unacknowledged long enough
+	// to get louder — a rising rate means people are not responding.
+	Escalations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "alerthub_escalations_total",
+		Help: "Alert escalations by severity and phase (SPEC-SAFETY §5).",
+	}, []string{"severity", "phase"})
+
 	// Labelled by the server's self-reported health so a degraded run is visible
 	// in Prometheus, not just to the browser clients watching the beat.
 	Heartbeats = promauto.NewCounterVec(prometheus.CounterOpts{

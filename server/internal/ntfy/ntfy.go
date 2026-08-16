@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/kazuha/alerthub/server/internal/alert"
@@ -78,6 +79,43 @@ func tagsFor(sev, cat string) []string {
 
 // Publish fans an alert out to ntfy. Safe to call in a goroutine; never blocks the
 // MQTT/sign hot path. No-op if ntfy is not configured.
+// Escalate re-sends an unacknowledged alert at a raised priority (SPEC-SAFETY
+// §5, T1/T2/T3). It is deliberately separate from Publish: the message says
+// "still unacknowledged", which is a different thing to say than the original
+// alert, and it must reach the loudest channel available even when the original
+// went out quietly.
+func (p *Publisher) Escalate(a *alert.Alert, phase int, pending []string) {
+	if !p.Enabled() {
+		return
+	}
+	title := "⚠ 仍未确认 · " + a.Title
+	body := a.Body
+	if len(pending) > 0 {
+		body += "  未确认设备: " + strings.Join(pending, ", ")
+	}
+	// Priority climbs with the phase and tops out at ntfy's max: by T3 nobody has
+	// responded, so this is the last thing that will make a phone make noise.
+	prio := 4 + phase
+	if prio > 5 {
+		prio = 5
+	}
+	tags := []string{"rotating_light", "bangbang"}
+	if p.cfg.BaseURL != "" {
+		p.post(p.cfg.BaseURL, p.cfg.Token, msg{
+			Topic: p.cfg.TopicPrefix + a.Severity, Title: title, Message: body,
+			Priority: prio, Tags: tags,
+		})
+	}
+	// The public relay carries no device names — it is a third-party host, and an
+	// escalation is not a reason to start leaking the roster to it.
+	if p.cfg.PublicTopic != "" {
+		p.post("https://ntfy.sh", "", msg{
+			Topic: p.cfg.PublicTopic, Title: title, Message: a.Body,
+			Priority: prio, Tags: tags,
+		})
+	}
+}
+
 func (p *Publisher) Publish(a *alert.Alert) {
 	if !p.Enabled() {
 		return

@@ -158,7 +158,9 @@ canonical（Go 与 verify.js 必须逐字节一致）：`"hb2" \n seq \n issued_
 
 ## 5. 确认送达 + 升级阶梯
 
-> 状态：❌ **未实现**（P3）。客户端会向 `alerts/<id>/ack/<deviceId>` 发 ack、broker ACL 也放行，但**服务端不订阅、不统计**——ack 目前只用于门控客户端本地的“消除”。T1/T2/T3 状态机、`alerts/<id>/escalation/<deviceId>` topic、`reissued_at`/`escalation_phase`/`requires_ack` 三个签名字段、以及 accept-gate 的“再次拉响”改动，全部尚未落地——**以下整节读作需求，不是现状。**
+> 状态：🟡 **服务端半环已实现**。ack 现由服务端订阅并持久化（§5.3），`critical`/`emergency` 发布后进入 **T1/T2/T3 per-alert 状态机**：仍有「在线但未确认」设备时逐级升级——经 ntfy 独立通道以递增优先级重发「仍未确认」，T3 标记 `UNREACHABLE` 并在日志与 `GET /api/alerts/escalations` 中给出待查设备名单。确认、撤回、TTL 到期均会终止阶梯；离线设备不阻塞阶梯（那是投递问题，已由备份通道覆盖）。
+>
+> **仍缺（需 schema v2）**：`reissued_at`/`escalation_phase`/`requires_ack` 三个**签名字段**与 accept-gate 的「再次拉响」改动——它们改变规范化形式，属破坏性协议变更；因此目前**客户端不会因升级而重新拉响**，升级只走服务端与 ntfy。`alerts/<id>/escalation/<deviceId>` topic 亦未落地（状态改由 HTTP 暴露）。
 
 对 `critical`/`emergency` 跑 **per-device 升级状态机**（"目标设备"=配置的必须 ack 名单，如每人手机 + 壁挂屏）。一台 ack 不停止对另一台未 ack 的升级。
 

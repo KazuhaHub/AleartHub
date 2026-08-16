@@ -259,6 +259,7 @@ func main() {
 	defer cancel()
 	go srv.RunSweeper(ctx)
 	go srv.RunHeartbeat(ctx)
+	go srv.RunEscalator(ctx) // SPEC-SAFETY §5 ladder
 	if deliveryMgr.Enabled() {
 		log.Printf("delivery pipeline: %d channel(s), durable outbox", len(senders))
 		go deliveryMgr.RunWorker(ctx)

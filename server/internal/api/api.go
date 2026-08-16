@@ -79,6 +79,8 @@ type Server struct {
 	// selfCheck() in the next heartbeat. Empty = the last publish succeeded.
 	lastPublishErr string
 
+	esc *escalator // SPEC-SAFETY §5 ladder state
+
 	presenceMu sync.Mutex
 	presence   map[string]Presence // deviceId -> last presence (from status/#)
 }
@@ -130,6 +132,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/devices", s.requirePerm(auth.PermDeviceRead, s.handleDevices))
 	// Who acknowledged an alert, and who is online but has not (SPEC §5.3).
 	mux.HandleFunc("/api/alerts/acks", s.requirePerm(auth.PermAlertRead, s.handleAcks))
+	// Live escalation ladder: which alerts are still unacknowledged, and by whom.
+	mux.HandleFunc("/api/alerts/escalations", s.requirePerm(auth.PermAlertRead, s.handleEscalations))
 	mux.HandleFunc("/api/delivery/stats", s.requirePerm(auth.PermAlertRead, s.handleDeliveryStats))
 	mux.HandleFunc("/api/orgs", s.requireRole(auth.RoleUser, s.handleOrgs))
 	// Audit trail (RBAC: settings:manage; verifying the global chain is super-only).
@@ -292,6 +296,7 @@ func (s *Server) PublishAlert(a *alert.Alert, orgID int64) error {
 	}
 	// Publishing an alert is the single most consequential action in the system;
 	// it must always leave a record naming who/what fired it.
+	s.TrackForAck(a) // critical/emergency start the §5 ladder; others never escalate
 	slog.Info("alert published", "alert_id", a.ID, "severity", a.Severity,
 		"category", a.Category, "source", a.Source, "org_id", orgID)
 	metrics.AlertsPublished.WithLabelValues(a.Severity, a.Category, a.Source).Inc()
@@ -390,6 +395,7 @@ func (s *Server) CancelByID(originalID, source string, orgID int64) (*alert.Aler
 	}); err != nil {
 		slog.Error("cancel persist failed", "cancel_id", c.ID, "cancels", originalID, "org_id", orgID, "err", err)
 	}
+	s.StopEscalation(originalID) // a recalled alert must stop nagging
 	slog.Info("alert cancelled", "cancels", originalID, "cancel_id", c.ID, "source", source, "org_id", orgID)
 	return c, nil
 }
