@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kazuha/alerthub/server/internal/alert"
 	"github.com/kazuha/alerthub/server/internal/cap"
@@ -200,5 +202,72 @@ func TestRenewAlert_SameIdFreshNonce(t *testing.T) {
 	}
 	if !alert.Verify(&renewed, ts.pub) {
 		t.Fatal("the renewed alert must be re-signed over its new canonical bytes")
+	}
+}
+
+// --- outbound CAP endpoints --------------------------------------------------
+
+func TestCAPOut_RendersPublishedAlert(t *testing.T) {
+	ts := newTestServer(t)
+	pw := ts.req(t, http.MethodPost, "/api/publish", validPublish(), adminHdr())
+	var a alert.Alert
+	_ = json.Unmarshal(pw.Body.Bytes(), &a)
+
+	rr := httptest.NewRequest(http.MethodGet, "/api/cap/alert?id="+a.ID, nil)
+	rr.Header.Set("Authorization", "Bearer "+testAdminToken)
+	w := httptest.NewRecorder()
+	ts.handler.ServeHTTP(w, rr)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("cap out = %d; body=%s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "cap+xml") {
+		t.Errorf("Content-Type = %q, want application/cap+xml", ct)
+	}
+	doc, err := cap.Parse(w.Body.Bytes())
+	if err != nil {
+		t.Fatalf("emitted document is not valid CAP: %v", err)
+	}
+	if doc.Identifier != a.ID {
+		t.Errorf("identifier = %q, want the alert id %q", doc.Identifier, a.ID)
+	}
+	// The severity must survive the trip out and back.
+	if got := doc.MapToAlert(time.Now()).Severity; got != a.Severity {
+		t.Errorf("severity round-tripped to %q, want %q", got, a.Severity)
+	}
+}
+
+func TestCAPOut_UnknownIDIs404(t *testing.T) {
+	ts := newTestServer(t)
+	rr := httptest.NewRequest(http.MethodGet, "/api/cap/alert?id=nope", nil)
+	rr.Header.Set("Authorization", "Bearer "+testAdminToken)
+	w := httptest.NewRecorder()
+	ts.handler.ServeHTTP(w, rr)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown id = %d, want 404", w.Code)
+	}
+}
+
+func TestCAPFeed_IsWellFormedAndAuthenticated(t *testing.T) {
+	ts := newTestServer(t)
+	_ = ts.req(t, http.MethodPost, "/api/publish", validPublish(), adminHdr())
+
+	if w := ts.req(t, http.MethodGet, "/api/cap/feed", nil, nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth feed = %d, want 401 (this feed is not public)", w.Code)
+	}
+	rr := httptest.NewRequest(http.MethodGet, "/api/cap/feed", nil)
+	rr.Header.Set("Authorization", "Bearer "+testAdminToken)
+	w := httptest.NewRecorder()
+	ts.handler.ServeHTTP(w, rr)
+	if w.Code != http.StatusOK {
+		t.Fatalf("feed = %d", w.Code)
+	}
+	// The whole feed must parse — a malformed entry would break every consumer.
+	var probe struct{ XMLName xml.Name }
+	if err := xml.Unmarshal(w.Body.Bytes(), &probe); err != nil {
+		t.Fatalf("feed is not well-formed XML: %v", err)
+	}
+	if !strings.Contains(w.Body.String(), "cap+xml") {
+		t.Error("feed entries should carry CAP documents")
 	}
 }

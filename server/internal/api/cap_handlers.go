@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"encoding/xml"
 	"io"
 	"net/http"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"github.com/kazuha/alerthub/server/internal/alert"
 	"github.com/kazuha/alerthub/server/internal/cap"
 	"github.com/kazuha/alerthub/server/internal/metrics"
+	"github.com/kazuha/alerthub/server/internal/store"
 )
 
 // oneline strips CR/LF so CAP-sourced text is safe for the signed canonical form
@@ -125,4 +128,109 @@ func firstNonEmptyStr(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// --- outbound CAP -----------------------------------------------------------
+
+// capSender identifies this instance in emitted CAP. A consumer dedupes on
+// (sender, identifier), so this must be stable across restarts — hence config,
+// not something derived from the request Host.
+func (s *Server) capSender() string {
+	if s.CAPSender != "" {
+		return s.CAPSender
+	}
+	return "alerthub"
+}
+
+// GET /api/cap/alert?id=<alertID> — one alert as CAP 1.2 XML.
+func (s *Server) handleCAPOut(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	org := s.orgFor(r)
+	var found *alert.Alert
+	err := s.inOrg(r.Context(), org, func(st *store.Store) error {
+		envs, e := st.History(org, 200)
+		if e != nil {
+			return e
+		}
+		for _, raw := range envs {
+			var a alert.Alert
+			if json.Unmarshal(raw, &a) == nil && a.ID == id {
+				found = &a
+				return nil
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		http.Error(w, "lookup failed", http.StatusInternalServerError)
+		return
+	}
+	if found == nil {
+		http.NotFound(w, r)
+		return
+	}
+	out, err := cap.ToXML(found, s.capSender())
+	if err != nil {
+		http.Error(w, "render failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/cap+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", cacheNoStore)
+	_, _ = w.Write(out)
+}
+
+// GET /api/cap/feed — recent alerts as a CAP feed.
+//
+// Emitted as an Atom feed of CAP documents rather than concatenated <alert>
+// elements: CAP has no multi-alert container, and consumers expect to poll a
+// feed. Each entry carries the alert's own CAP document inline.
+func (s *Server) handleCAPFeed(w http.ResponseWriter, r *http.Request) {
+	org := s.orgFor(r)
+	var envs []json.RawMessage
+	err := s.inOrg(r.Context(), org, func(st *store.Store) error {
+		var e error
+		envs, e = st.History(org, 50)
+		return e
+	})
+	if err != nil {
+		http.Error(w, "feed failed", http.StatusInternalServerError)
+		return
+	}
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
+	b.WriteString(`<feed xmlns="http://www.w3.org/2005/Atom">` + "\n")
+	b.WriteString("  <title>AlertHub CAP feed</title>\n")
+	b.WriteString("  <id>urn:alerthub:" + xmlEscape(s.capSender()) + "</id>\n")
+	b.WriteString("  <updated>" + time.Now().UTC().Format(time.RFC3339) + "</updated>\n")
+	for _, raw := range envs {
+		var a alert.Alert
+		if json.Unmarshal(raw, &a) != nil {
+			continue
+		}
+		doc, err := cap.ToXML(&a, s.capSender())
+		if err != nil {
+			continue
+		}
+		// Strip the XML declaration: it is illegal inside a document.
+		inner := strings.TrimPrefix(string(doc), xml.Header)
+		b.WriteString("  <entry>\n    <id>urn:alerthub:alert:" + xmlEscape(a.ID) + "</id>\n")
+		b.WriteString("    <title>" + xmlEscape(a.Title) + "</title>\n")
+		b.WriteString("    <updated>" + time.Unix(a.IssuedAt, 0).UTC().Format(time.RFC3339) + "</updated>\n")
+		b.WriteString("    <content type=\"application/cap+xml\">\n" + inner + "\n    </content>\n  </entry>\n")
+	}
+	b.WriteString("</feed>\n")
+
+	w.Header().Set("Content-Type", "application/atom+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", cacheNoStore)
+	_, _ = w.Write([]byte(b.String()))
+}
+
+func xmlEscape(s string) string {
+	var b strings.Builder
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
 }

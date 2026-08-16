@@ -70,6 +70,10 @@ type Server struct {
 	WatchdogConfigured bool
 	SIEMConfigured     bool
 
+	// CAPSender identifies this instance in EMITTED CAP. Consumers dedupe on
+	// (sender, identifier), so it must be stable across restarts.
+	CAPSender string
+
 	OIDCDefaultRole string // role for JIT-provisioned SSO users
 	DefaultOrgID    int64  // single-tenant active org (M1; per-request active org is M2)
 
@@ -124,6 +128,9 @@ func (s *Server) Handler() http.Handler {
 	// CAP 1.2 ingest — the interop API for other programs/systems (service-account
 	// API key with scope alerts:ingest, or admin).
 	mux.HandleFunc("/api/cap", s.requireScope("alerts:ingest", s.handleCAPIngest))
+	// Outbound CAP: let other systems consume our alerts in the standard format.
+	mux.HandleFunc("/api/cap/alert", s.requirePerm(auth.PermAlertRead, s.handleCAPOut))
+	mux.HandleFunc("/api/cap/feed", s.requirePerm(auth.PermAlertRead, s.handleCAPFeed))
 	// Service-account (API key) management (RBAC: sa:manage).
 	mux.HandleFunc("/api/admin/service-accounts", s.requirePerm(auth.PermSAManage, s.handleServiceAccounts))
 	mux.HandleFunc("/api/admin/service-accounts/delete", s.requirePerm(auth.PermSAManage, s.handleServiceAccountDelete))

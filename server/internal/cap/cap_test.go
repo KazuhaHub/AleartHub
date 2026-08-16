@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kazuha/alerthub/server/internal/alert"
 	"github.com/kazuha/alerthub/server/internal/cap"
 )
 
@@ -104,5 +105,97 @@ func TestParseReferences(t *testing.T) {
 	}
 	if len(cap.ParseReferences("senderonly")) != 0 {
 		t.Fatal("a token with no identifier must be dropped")
+	}
+}
+
+// --- outbound CAP ------------------------------------------------------------
+
+// TestToXML_RoundTripsSeverity is the property that matters: ingest collapses
+// CAP's urgency × severity × certainty into one value, so emitting has to invent
+// a triple back. It must be a triple that collapses to the SAME severity, or
+// alerts drift every time they cross a system boundary.
+func TestToXML_RoundTripsSeverity(t *testing.T) {
+	for _, sev := range []string{"emergency", "critical", "warning", "notice"} {
+		a := &alert.Alert{
+			SchemaVersion: alert.SchemaVersion, ID: "x-" + sev, Type: "alert",
+			Category: "fire", Severity: sev, Title: "t", Source: "panel",
+			IssuedAt: 1765238400, TTL: 600,
+		}
+		xmlBytes, err := cap.ToXML(a, "alerthub-test")
+		if err != nil {
+			t.Fatalf("%s: ToXML: %v", sev, err)
+		}
+		doc, err := cap.Parse(xmlBytes)
+		if err != nil {
+			t.Fatalf("%s: emitted XML does not parse as CAP: %v", sev, err)
+		}
+		got := doc.MapToAlert(time.Unix(1765238400, 0))
+		if got.Severity != sev {
+			t.Errorf("%s round-tripped to %s — the emitted triple collapses differently", sev, got.Severity)
+		}
+		if got.Category != "fire" {
+			t.Errorf("%s: category round-tripped to %q, want fire", sev, got.Category)
+		}
+	}
+}
+
+// A drill must not be emitted as Actual, or a downstream system could escalate a
+// test into a real response — the mirror of the drill gate we apply on ingest.
+func TestToXML_DrillIsNotActual(t *testing.T) {
+	a := &alert.Alert{
+		SchemaVersion: alert.SchemaVersion, ID: "d1", Type: "alert", Category: "system",
+		Severity: "warning", Title: "drill", Source: "drill", IssuedAt: 1765238400, TTL: 600,
+	}
+	out, err := cap.ToXML(a, "alerthub-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := cap.Parse(out)
+	if doc.Status != "Exercise" {
+		t.Fatalf("drill emitted with status %q, want Exercise", doc.Status)
+	}
+	if !doc.MapToAlert(time.Now()).IsTest {
+		t.Error("a re-ingested drill must still be flagged as a test")
+	}
+}
+
+// A Cancel must say what it recalls, or a consumer cannot act on it.
+func TestToXML_CancelCarriesReferences(t *testing.T) {
+	c := &alert.Alert{
+		SchemaVersion: alert.SchemaVersion, ID: "c1", Type: "cancel", Category: "custom",
+		Severity: "notice", Title: "解除", Cancels: "orig-1", IssuedAt: 1765238400, TTL: 120,
+	}
+	out, err := cap.ToXML(c, "alerthub-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := cap.Parse(out)
+	if doc.MsgType != "Cancel" {
+		t.Fatalf("msgType = %q, want Cancel", doc.MsgType)
+	}
+	refs := cap.ParseReferences(doc.References)
+	if len(refs) != 1 || refs[0].Identifier != "orig-1" {
+		t.Fatalf("references = %+v, want one entry naming orig-1", refs)
+	}
+}
+
+// Emitted XML must be well-formed even when the alert text contains characters
+// that are special in XML.
+func TestToXML_EscapesText(t *testing.T) {
+	a := &alert.Alert{
+		SchemaVersion: alert.SchemaVersion, ID: "e1", Type: "alert", Category: "fire",
+		Severity: "critical", Title: `火灾 & <script>alert("x")</script>`,
+		Body: "a > b", IssuedAt: 1765238400, TTL: 600,
+	}
+	out, err := cap.ToXML(a, "alerthub-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := cap.Parse(out)
+	if err != nil {
+		t.Fatalf("XML with special characters did not round-trip: %v", err)
+	}
+	if doc.Info[0].Headline != a.Title {
+		t.Fatalf("headline = %q, want the original text back", doc.Info[0].Headline)
 	}
 }
