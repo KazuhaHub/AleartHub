@@ -81,6 +81,8 @@ type Server struct {
 
 	esc *escalator // SPEC-SAFETY §5 ladder state
 
+	DrillCfg DrillConfig // SPEC-SAFETY §3.4 weekly drill
+
 	presenceMu sync.Mutex
 	presence   map[string]Presence // deviceId -> last presence (from status/#)
 }
@@ -134,6 +136,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/alerts/acks", s.requirePerm(auth.PermAlertRead, s.handleAcks))
 	// Live escalation ladder: which alerts are still unacknowledged, and by whom.
 	mux.HandleFunc("/api/alerts/escalations", s.requirePerm(auth.PermAlertRead, s.handleEscalations))
+	// Drill history + on-demand run (SPEC-SAFETY §3.4).
+	mux.HandleFunc("/api/drills", s.requirePerm(auth.PermAlertRead, s.handleDrills))
+	mux.HandleFunc("/api/drills/run", s.requirePerm(auth.PermAlertPublish, s.handleDrillRun))
 	mux.HandleFunc("/api/delivery/stats", s.requirePerm(auth.PermAlertRead, s.handleDeliveryStats))
 	mux.HandleFunc("/api/orgs", s.requireRole(auth.RoleUser, s.handleOrgs))
 	// Audit trail (RBAC: settings:manage; verifying the global chain is super-only).

@@ -260,6 +260,15 @@ func main() {
 	go srv.RunSweeper(ctx)
 	go srv.RunHeartbeat(ctx)
 	go srv.RunEscalator(ctx) // SPEC-SAFETY §5 ladder
+	// SPEC-SAFETY §3.4: prove the chain works before it is needed. Off by default
+	// — a drill publishes a REAL alert, so switching it on is a deliberate act.
+	drillCfg := api.DefaultDrillConfig()
+	drillCfg.Enabled = env("ALERTHUB_DRILL", "") == "true"
+	if v := env("ALERTHUB_DRILL_WINDOW", ""); v != "" {
+		drillCfg.Window = parseDuration(v, drillCfg.Window)
+	}
+	srv.DrillCfg = drillCfg
+	go srv.RunDrills(ctx, drillCfg)
 	if deliveryMgr.Enabled() {
 		log.Printf("delivery pipeline: %d channel(s), durable outbox", len(senders))
 		go deliveryMgr.RunWorker(ctx)

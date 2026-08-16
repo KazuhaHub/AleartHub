@@ -123,7 +123,8 @@ canonical（Go 与 verify.js 必须逐字节一致）：`"hb2" \n seq \n issued_
 
 ### 3.4 演练（在出事前证明它还活着）
 
-> 状态：❌ 未实现。没有演练 cron、收集窗与名册对照。（CAP 侧的 `status=Exercise/Test/System → 强制降为演练` 已实现，见 §7，可手动灌一条演练警报。）
+> 状态：🟡 **已实现**（默认关闭，`ALERTHUB_DRILL=true` 开启）。默认**周日 10:00 JST**发一条**真**警报（走完整签名→broker→accept-gate→ack 路径；绕过任何一环的演练只能证明测试脚手架可用），等 10min 收集窗（`ALERTHUB_DRILL_WINDOW` 可调），对照在线名册记 PASS/FAIL 入 `drills` 表；漏 ack **只通知管理员**（ntfy），不打扰全员——每周骚扰所有人的演练比不做演练更糟。`GET /api/drills` 看趋势，`POST /api/drills/run` 手动触发（需 `alert:publish`，因为它会发真警报）。
+> **仍缺**：季度性 `critical` 演练需手动触发（未自动排程）；演练时离线的设备**不会**在下次 birth 时自动补测。
 服务端 cron goroutine，**每周日 10:00 JST**：发一条 `category=system, severity=warning, drill=true` 的**真**警报（走完整签名+渲染+accept-gate+ack 路径），等 10min 收集窗，对照 `status/#` 设备名册：
 - 全 ack → 面板/壁挂记"上次演练 PASS N/N"。
 - 有设备漏 ack → **只通知管理员**（非全家）：ntfy prio4 + 邮件"设备 X 未确认月度测试，可能在真实警报时不会响"。SQLite 存历史看劣化。演练时离线的设备，下次 birth 时补测。

@@ -224,6 +224,13 @@ func (s *Store) migrateSQLite() error {
 			ack_at INTEGER NOT NULL, by_who TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (alert_id, device_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS drills (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			org_id INTEGER NOT NULL, at INTEGER NOT NULL, alert_id TEXT NOT NULL,
+			severity TEXT NOT NULL DEFAULT '', expected INTEGER NOT NULL DEFAULT 0,
+			acked INTEGER NOT NULL DEFAULT 0, missed TEXT NOT NULL DEFAULT '',
+			passed INTEGER NOT NULL DEFAULT 0
+		)`,
 		`CREATE TABLE IF NOT EXISTS settings (
 			k TEXT PRIMARY KEY, v TEXT NOT NULL DEFAULT ''
 		)`,
@@ -318,6 +325,13 @@ func (s *Store) migratePostgres() error {
 			org_id BIGINT NOT NULL, alert_id TEXT NOT NULL, device_id TEXT NOT NULL,
 			ack_at BIGINT NOT NULL, by_who TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (alert_id, device_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS drills (
+			id BIGSERIAL PRIMARY KEY,
+			org_id BIGINT NOT NULL, at BIGINT NOT NULL, alert_id TEXT NOT NULL,
+			severity TEXT NOT NULL DEFAULT '', expected INTEGER NOT NULL DEFAULT 0,
+			acked INTEGER NOT NULL DEFAULT 0, missed TEXT NOT NULL DEFAULT '',
+			passed INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS settings (
 			k TEXT PRIMARY KEY, v TEXT NOT NULL DEFAULT ''
