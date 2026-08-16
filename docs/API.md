@@ -312,6 +312,16 @@
 | `GET /api/orgs` | 会话 | 超级管理员看到全部组织，其他用户只看到自己有成员关系的组织。 |
 | `POST /api/orgs` | 会话（**仅超级管理员**） | 创建组织。**仅当调用方是会话用户时**创建者才自动获得 `owner` 成员身份；用静态 admin token 调用不会写入成员行（无 JWT claims 可归属）。 |
 
+### 出向 CAP（把我们的告警发布为 CAP 1.2）
+
+| 方法 路径 | 鉴权 | 说明 |
+|---|---|---|
+| `GET /api/cap/alert?id=<alertID>` | perm `alert:read` | 单条告警渲染为 **CAP 1.2 XML**（`application/cap+xml`）。severity 反推为一组会**折叠回同一 severity** 的 urgency/severity/certainty 三元组（有往返测试守护）。`type=cancel` 会带上 `<references>` 指明撤回对象。 |
+| `GET /api/cap/feed` | perm `alert:read` | 最近 50 条的 **Atom feed**，每个 entry 内嵌该告警的 CAP 文档（CAP 本身没有多告警容器，消费方期望一个可轮询的 feed）。**需鉴权**，不是公开广播源。 |
+
+`<sender>` 取自 `ALERTHUB_CAP_SENDER`（默认 `alerthub`）。消费方按 `(sender, identifier)` 去重，**必须跨重启稳定**，因此它是配置项而非从请求 Host 推导。
+**演练**以 `status=Exercise` 发出，绝不标 `Actual` —— 这是 ingest 侧演练门的镜像：不能让一次测试在下游被升级成真实响应。
+
 ### 审计日志
 
 | 方法 路径 | 鉴权 | 说明 |
